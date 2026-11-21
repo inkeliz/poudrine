@@ -32,8 +32,9 @@ type CatalogPackage struct {
 }
 
 type manifest struct {
-	pkg CatalogPackage
-	raw json.RawMessage
+	pkg      CatalogPackage
+	raw      json.RawMessage
+	provides []string
 }
 type repoContent struct {
 	byName map[string]manifest
@@ -52,10 +53,19 @@ type catalogSnapshot struct {
 	compiled      map[string]CatalogPackage
 	compiledAt    map[string]time.Time
 	compiledFiles map[string]*compiledArchive
+	liveHolds     map[string]liveHold
 	fetched       map[string]bool
+	beforeLive    map[string]string // baseline versions displaced by early publication
 	metadata      map[string]metadataFile
 	updated       time.Time
 	ahead         int
+}
+
+func (s *catalogSnapshot) offeredVersion(name string) string {
+	if version, staged := s.beforeLive[name]; staged {
+		return version
+	}
+	return s.byPath[s.pathByName[name]].Version
 }
 
 func (s *catalogSnapshot) freeBSDPackage(name string) (CatalogPackage, bool) {
@@ -73,6 +83,7 @@ func (s *catalogSnapshot) freeBSDPackage(name string) (CatalogPackage, bool) {
 type Catalog struct {
 	upstream               *url.URL
 	fingerprints, localDir string
+	jailRoot               string
 	client                 *http.Client
 	key                    *rsa.PrivateKey
 	PublicKey              []byte
@@ -84,7 +95,9 @@ type Catalog struct {
 	live                   map[string]livePackage
 	localIndex             os.FileInfo
 	localArchives          map[string]os.FileInfo
+	baseLibraries          map[string]bool
 	current                atomic.Pointer[catalogSnapshot]
+	liveScan               atomic.Pointer[liveScanReport]
 }
 
 func NewCatalog(stateDir, upstreamURL, fingerprintsDir, localRepoDir string, client *http.Client) (*Catalog, error) {
@@ -190,6 +203,7 @@ func parseCatalog(b []byte, member string, local bool) (repoContent, error) {
 		var m struct {
 			Path, Repopath, Name, Origin, Version, Sum, ABI, Arch string
 			Pkgsize                                               *int64
+			Provides                                              []string `json:"shlibs_provided"`
 			Annotations                                           struct{ Flavor, Subpackage string }
 		}
 		if err := json.Unmarshal(raw, &m); err != nil {
@@ -213,7 +227,7 @@ func parseCatalog(b []byte, member string, local bool) (repoContent, error) {
 		if old, ok := repo.byName[p.Name]; ok && comparePkgVersions(old.pkg.Version, p.Version) >= 0 {
 			return nil
 		}
-		repo.byName[p.Name] = manifest{pkg: p, raw: raw}
+		repo.byName[p.Name] = manifest{pkg: p, raw: raw, provides: m.Provides}
 		return nil
 	}
 	if member == "data" {
@@ -319,11 +333,15 @@ func (c *Catalog) publishCatalog(ctx context.Context, upstream *repoContent, rev
 	repo := repoContent{byName: maps.Clone(upstream.byName), extras: upstream.extras}
 	var local repoContent
 	if index != nil {
-		m, err := unpackCatalog(index, "packagesite.yaml")
+		member := "packagesite.yaml"
+		if strings.HasPrefix(filepath.Base(index.Name()), "data.") {
+			member = "data"
+		}
+		m, err := unpackCatalog(index, member)
 		if err != nil {
 			return fmt.Errorf("local Poudriere catalog: %w", err)
 		}
-		local, err = parseCatalog(m["packagesite.yaml"], "packagesite.yaml", true)
+		local, err = parseCatalog(m[member], member, true)
 		if err != nil {
 			return fmt.Errorf("local Poudriere catalog: %w", err)
 		}
@@ -379,9 +397,13 @@ func (c *Catalog) publishCatalog(ctx context.Context, upstream *repoContent, rev
 		// Poudriere can satisfy build dependencies with prebuilt packages.
 		// It hardlinks these from .pkg-cache into the local All directory.
 		fetched, err := fetchedByPoudriere(c.localDir, m.pkg.Path, stat)
-		if fetched {
-			s.fetched[name] = true
-		} else if err == nil {
+		if err != nil {
+			if preferred {
+				return fmt.Errorf("identify native package %s: %w", m.pkg.Path, err)
+			}
+			continue
+		}
+		if !fetched {
 			file := &compiledArchive{path: filepath.Join(c.localDir, m.pkg.Path), info: stat}
 			if prev := c.current.Load(); prev != nil && prev.compiled[name].Sum == m.pkg.Sum {
 				if prior := prev.compiledFiles[name]; prior != nil && prior.path == file.path && sameArchive(prior.info, stat) {
@@ -403,12 +425,19 @@ func (c *Catalog) publishCatalog(ctx context.Context, upstream *repoContent, rev
 		if !preferred {
 			continue
 		}
+		if fetched {
+			s.fetched[name] = true
+		}
 		repo.byName[name] = m
 		if exists {
 			s.displaced[name] = old.pkg
 		}
 	}
-	mergeLivePackages(live, repo.byName, arches, s)
+	var baseLibraries map[string]bool
+	if len(live) > 0 {
+		baseLibraries = jailBaseLibraries(c.jailRoot)
+		mergeLivePackages(live, repo.byName, arches, baseLibraries, s)
+	}
 	// Emit the same complete manifests in both pkg formats, including fields
 	// introduced after this software was built.
 	names := make([]string, 0, len(repo.byName))
@@ -433,7 +462,7 @@ func (c *Catalog) publishCatalog(ctx context.Context, upstream *repoContent, rev
 		}
 		s.byPath[m.pkg.Path] = m.pkg
 		s.pathByName[m.pkg.Name] = m.pkg.Path
-		if original, ok := s.displaced[k]; ok && comparePkgVersions(m.pkg.Version, original.Version) > 0 {
+		if original, ok := s.displaced[k]; ok && !s.fetched[k] && comparePkgVersions(m.pkg.Version, original.Version) > 0 {
 			s.ahead++
 		}
 		if m.pkg.Name == "pkg" {
@@ -491,11 +520,12 @@ func (c *Catalog) publishCatalog(ctx context.Context, upstream *repoContent, rev
 	if err := checkUpstreamFingerprint(c.fingerprints, revision.fingerprint); err != nil {
 		return err
 	}
-	if err := c.retainLiveDownloads(s); err != nil {
+	if err := c.retainLiveDownloads(s, live); err != nil {
 		return err
 	}
 	c.revision, c.upstreamContent, c.localIndex, c.localArchives = revision, upstream, info, localFiles
 	c.live = maps.Clone(live)
+	c.baseLibraries = baseLibraries
 	c.current.Store(s)
 	return nil
 }

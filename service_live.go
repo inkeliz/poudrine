@@ -19,15 +19,16 @@ const liveDownloadGrace = 24 * time.Hour
 // Only the package URLs selected for a signed catalog get a download link.
 // A client using that catalog can finish fetching after Poudriere rotates
 // its repository, even if the web service has since restarted.
-func (c *Catalog) retainLiveDownloads(s *catalogSnapshot) error {
+func (c *Catalog) retainLiveDownloads(s *catalogSnapshot, live map[string]livePackage) error {
 	dir := filepath.Join(c.liveDir, "published")
 	previous := c.current.Load()
 	created := false
-	for name, p := range s.compiled {
-		if !p.live || s.pathByName[name] != p.Path {
+	for name, candidate := range live {
+		p := candidate.manifest.pkg
+		if !s.byPath[p.Path].live {
 			continue
 		}
-		if previous != nil && previous.byPath[p.Path].live && previous.compiledFiles[name] == s.compiledFiles[name] {
+		if previous != nil && previous.byPath[p.Path].live && c.live[name].file == candidate.file {
 			continue
 		}
 		if !created {
@@ -36,7 +37,7 @@ func (c *Catalog) retainLiveDownloads(s *catalogSnapshot) error {
 			}
 			created = true
 		}
-		file := s.compiledFiles[name]
+		file := candidate.file
 		dst := filepath.Join(dir, filepath.Base(p.Path))
 		if err := os.Link(file.path, dst); err != nil {
 			if !errors.Is(err, os.ErrExist) {
@@ -100,36 +101,27 @@ func monitorLivePackages(ctx context.Context, o options, cat *Catalog) {
 	tick := time.NewTicker(15 * time.Second)
 	defer tick.Stop()
 	for ctx.Err() == nil {
-		s, err := ReadBuildStatus(o.builder.StatusFile)
-		if err == nil {
-			if s.Active && s.Stage == "building" && !s.Started.IsZero() && sameBuilderRepository(o) {
-				// The scanner pins the named run and ignores incomplete results.
-				candidates, err = store.scan(ctx, o.builder, s.Started)
+		var err error
+		candidates = nil
+		snapshot := cat.current.Load()
+		if snapshot != nil && sameBuilderRepository(o) {
+			store.offeredVersion = snapshot.offeredVersion
+			candidates, err = store.scan(ctx, o.builder)
+		}
+		if err != nil {
+			candidates = submitted
+		}
+		changed := !maps.EqualFunc(submitted, candidates, func(a, b livePackage) bool { return a.file == b.file && a.fetched == b.fetched })
+		if snapshot != nil && (changed || cat.publicationInputsChanged()) {
+			if publishErr := cat.PublishLive(ctx, candidates); publishErr == nil {
+				submitted = candidates
 			} else {
-				candidates = nil
-				store = liveArchiveStore{dir: cat.liveDir, repoDir: o.localRepo}
+				err = errors.Join(err, publishErr)
 			}
-			changed := !maps.EqualFunc(submitted, candidates, func(a, b livePackage) bool { return a.file == b.file })
-			if err == nil && changed && cat.current.Load() != nil {
-				// Copying the backlog after a restart can take longer than
-				// the remaining bulk. Recheck which run supplied the bytes.
-				if len(candidates) > 0 {
-					var latest BuildStatus
-					latest, err = ReadBuildStatus(o.builder.StatusFile)
-					if err == nil && (!latest.Active || !latest.Started.Equal(s.Started)) {
-						candidates = nil
-					}
-				}
-				if err == nil {
-					err = cat.PublishLive(ctx, candidates)
-				}
-				if err == nil {
-					submitted = candidates
-				}
-			}
-			if err != nil && ctx.Err() == nil {
-				log.Printf("publish completed packages: %v", err)
-			}
+		}
+		cat.recordLiveScan(store.failures, err)
+		if err != nil && ctx.Err() == nil {
+			log.Printf("publish completed packages: %v", err)
 		}
 		now := time.Now()
 		if now.Sub(lastSweep) >= time.Hour {

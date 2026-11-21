@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -83,7 +84,7 @@ type catalogRevision struct {
 
 func (c *Catalog) openLocalIndex() (*os.File, os.FileInfo, error) {
 	if c.localDir != "" {
-		for _, name := range []string{"packagesite.pkg", "packagesite.txz", "packagesite.tzst"} {
+		for _, name := range []string{"data.pkg", "data.tzst", "data.txz", "packagesite.pkg", "packagesite.txz", "packagesite.tzst"} {
 			f, err := os.Open(filepath.Join(c.localDir, name))
 			if errors.Is(err, os.ErrNotExist) {
 				continue
@@ -102,12 +103,35 @@ func (c *Catalog) openLocalIndex() (*os.File, os.FileInfo, error) {
 	return nil, nil, nil
 }
 
-func (c *Catalog) localInputsUnchanged(index os.FileInfo) bool {
-	old := c.localIndex
+func sameLocalIndex(old, index os.FileInfo) bool {
 	if index == nil || old == nil {
 		return index == nil && old == nil
 	}
-	if !os.SameFile(old, index) || index.Size() != old.Size() || !index.ModTime().Equal(old.ModTime()) {
+	return sameArchive(old, index)
+}
+
+// A native commit is a local publication event even when there were no
+// captured packages, or the next upstream HTTP request has not completed.
+func (c *Catalog) publicationInputsChanged() bool {
+	f, info, err := c.openLocalIndex()
+	if err != nil {
+		return true // PublishLive reports the read error to Management.
+	}
+	if f != nil {
+		f.Close()
+	}
+	c.publish.Lock()
+	defer c.publish.Unlock()
+	return !c.samePublicationInputs(info)
+}
+
+func (c *Catalog) samePublicationInputs(index os.FileInfo) bool {
+	return sameLocalIndex(c.localIndex, index) &&
+		(len(c.live) == 0 || maps.Equal(c.baseLibraries, jailBaseLibraries(c.jailRoot)))
+}
+
+func (c *Catalog) localInputsUnchanged(index os.FileInfo) bool {
+	if !c.samePublicationInputs(index) {
 		return false
 	}
 	// Even with the same index, a previously missing local archive might

@@ -6,15 +6,19 @@ LOCALBASE = /usr/local
 release_files = poudrine poudrine-status rc.d examples/poudrine.json Makefile README.md
 source_files = *.go go.mod go.sum cmd internal web rc.d examples Makefile README.md
 
-.PHONY: all build install dist
+.PHONY: all build install install-built dist
 all: build
 
 build:
 	CGO_ENABLED=0 GOOS=freebsd ${GO} build -trimpath -o poudrine ./cmd/poudrine
 	CGO_ENABLED=0 GOOS=freebsd ${GO} build -trimpath -o poudrine-status ./cmd/poudrine-status
 
-# Both a source build and an extracted binary distribution use this target.
+# Binary distributions contain only the executables and installation files.
 install:
+	@if test -f go.mod; then ${MAKE} build; fi
+	@${MAKE} install-built
+
+install-built:
 	test -x poudrine && test -x poudrine-status
 	install -d "${DESTDIR}${LOCALBASE}/sbin" "${DESTDIR}${LOCALBASE}/etc/rc.d"
 	install -S -m 0555 poudrine poudrine-status "${DESTDIR}${LOCALBASE}/sbin/"

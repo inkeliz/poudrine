@@ -3,9 +3,38 @@ package poudrine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestInventoryExplainsUnpublishedVersion(t *testing.T) {
+	const abi = "freebsd:15:amd64"
+	record := BuildRecord{Package: "firefox-161.0,2", Outcome: "succeeded", Origin: "www/firefox", ABI: abi}
+	upstream := CatalogPackage{Name: "firefox", Origin: record.Origin, BuildOrigin: record.Origin, ABI: abi,
+		Version: "160.0,2", Path: "All/firefox-160.0,2.pkg"}
+	s := &catalogSnapshot{byPath: map[string]CatalogPackage{upstream.Path: upstream}, pathByName: map[string]string{"firefox": upstream.Path}}
+	cat := &Catalog{}
+	check := func(want string) {
+		t.Helper()
+		view := managementPackages(s, nil, nil, nil, nil, []BuildRecord{record})
+		describeUnpublished(view.Packages, s, cat.liveScan.Load())
+		if len(view.Packages) != 1 || !view.Packages[0].HistoryOnly || !strings.Contains(view.Packages[0].PublicationNote, want) {
+			t.Fatalf("want unpublished reason %q, got %+v", want, view.Packages)
+		}
+	}
+	check("pkg currently offers 160.0,2")
+	s.liveHolds = map[string]liveHold{record.Package: {pkg: CatalogPackage{Origin: record.Origin, ABI: abi}, reason: "Waiting for nss"}}
+	check("Waiting for nss")
+	record.ABI = "freebsd:14:amd64"
+	check("No matching compiled archive")
+	record.ABI = abi
+	s.liveHolds = nil
+	cat.recordLiveScan(map[string]liveCaptureFailure{record.Package: {origin: record.Origin, message: "permission denied"}}, nil)
+	check("permission denied")
+	cat.recordLiveScan(nil, nil)
+	check("pkg currently offers 160.0,2")
+}
 
 func TestInventoryFindsNativeBuildBeforeRepositoryPublication(t *testing.T) {
 	cfg := workerTestConfig(t.TempDir())

@@ -27,27 +27,29 @@ type packageInventoryView struct {
 }
 
 type managementPackage struct {
-	Name           string    `json:"name"`
-	Origin         string    `json:"origin"`
-	BuildOrigin    string    `json:"build_origin"`
-	Source         string    `json:"source"`
-	Version        string    `json:"version,omitempty"`
-	PortVersion    string    `json:"port_version,omitempty"`
-	LocalVersion   string    `json:"local_version,omitempty"`
-	FreeBSDVersion string    `json:"freebsd_version,omitempty"`
-	VersionsDiffer bool      `json:"versions_differ"`
-	BuildSeconds   *int64    `json:"build_seconds,omitempty"`
-	LastSeen       int64     `json:"last_seen,omitempty"`
-	Size           *int64    `json:"size,omitempty"`
-	Consumers      *int      `json:"consumers,omitempty"`
-	Tracked        bool      `json:"tracked"`
-	Compiled       bool      `json:"compiled"`
-	HistoryOnly    bool      `json:"history_only,omitempty"`
-	BuildABI       string    `json:"build_abi,omitempty"`
-	Cached         bool      `json:"cached"`
-	CacheVersion   string    `json:"cache_version,omitempty"`
-	CacheKey       string    `json:"cache_key,omitempty"`
-	builtAt        time.Time // Matching retained build, including one with unknown duration.
+	Name            string    `json:"name"`
+	Origin          string    `json:"origin"`
+	BuildOrigin     string    `json:"build_origin"`
+	Source          string    `json:"source"`
+	Version         string    `json:"version,omitempty"`
+	PortVersion     string    `json:"port_version,omitempty"`
+	LocalVersion    string    `json:"local_version,omitempty"`
+	FreeBSDVersion  string    `json:"freebsd_version,omitempty"`
+	VersionsDiffer  bool      `json:"versions_differ"`
+	BuildSeconds    *int64    `json:"build_seconds,omitempty"`
+	LastSeen        int64     `json:"last_seen,omitempty"`
+	Size            *int64    `json:"size,omitempty"`
+	Consumers       *int      `json:"consumers,omitempty"`
+	Tracked         bool      `json:"tracked"`
+	Compiled        bool      `json:"compiled"`
+	WorkerFetched   bool      `json:"worker_fetched,omitempty"`
+	HistoryOnly     bool      `json:"history_only,omitempty"`
+	PublicationNote string    `json:"publication_note,omitempty"`
+	BuildABI        string    `json:"build_abi,omitempty"`
+	Cached          bool      `json:"cached"`
+	CacheVersion    string    `json:"cache_version,omitempty"`
+	CacheKey        string    `json:"cache_key,omitempty"`
+	builtAt         time.Time // Matching retained build, including one with unknown duration.
 }
 
 func (a *Admin) packageInventory(w http.ResponseWriter, r *http.Request, body []byte) {
@@ -194,6 +196,7 @@ func managementPackages(s *catalogSnapshot, tracked []trackedPackageRecord, orig
 	}
 
 	compiledRows := make(map[string]int)
+	workerFetchedRows := make(map[string]int)
 	if s != nil {
 		var compiledBytes int64
 		for name, local := range s.compiled {
@@ -206,14 +209,33 @@ func managementPackages(s *catalogSnapshot, tracked []trackedPackageRecord, orig
 			view.Packages = append(view.Packages, row)
 		}
 		view.CompiledBytes = &compiledBytes
+		for name, fetched := range s.fetched {
+			p := s.byPath[s.pathByName[name]]
+			if !fetched || !p.Local {
+				continue
+			}
+			row := rowFor(p)
+			row.WorkerFetched = true
+			workerFetchedRows[name] = len(view.Packages)
+			view.Packages = append(view.Packages, row)
+		}
 	}
 	for _, entry := range cache {
 		p := entry.Package
+		view.CachedBytes += p.Size
+		if i, ok := workerFetchedRows[p.Name]; ok {
+			row := &view.Packages[i]
+			selected := s.byPath[s.pathByName[p.Name]]
+			if p.Version == selected.Version && p.Size == selected.Size && !row.Cached && matchesBuildIdentity(selected, cmp.Or(p.BuildOrigin, p.Origin), p.ABI) {
+				row.Cached, row.CacheVersion, row.CacheKey = true, p.Version, entry.Key
+				row.LastSeen = max(row.LastSeen, entry.Used.Unix())
+				continue
+			}
+		}
 		row := rowFor(p)
 		row.Source, row.Version, row.Size, row.Cached = "freebsd", p.Version, &p.Size, true
 		row.CacheVersion, row.CacheKey, row.LastSeen = p.Version, entry.Key, entry.Used.Unix()
 		view.Packages = append(view.Packages, row)
-		view.CachedBytes += p.Size
 	}
 	for _, build := range builds {
 		name, version := splitBuildPackage(build.Package)
@@ -242,6 +264,11 @@ func managementPackages(s *catalogSnapshot, tracked []trackedPackageRecord, orig
 		}
 		row := rowFor(CatalogPackage{Name: name, Origin: basePort(origin), BuildOrigin: origin})
 		row.HistoryOnly, row.BuildABI, row.BuildSeconds = true, build.ABI, build.BuildSeconds
+		if s != nil {
+			if hold, ok := s.liveHolds[build.Package]; ok && matchesBuildIdentity(hold.pkg, build.Origin, build.ABI) {
+				row.PublicationNote = hold.reason
+			}
+		}
 		row.Source, row.Version, row.Size = "poudrine", version, nil
 		row.LastSeen = build.Finished.Unix()
 		if !localMatch {

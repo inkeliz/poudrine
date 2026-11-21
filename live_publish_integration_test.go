@@ -37,7 +37,11 @@ func putLiveFixture(t *testing.T, path string, data []byte) {
 }
 
 func liveFixtureManifest(name, version string) string {
-	return fmt.Sprintf(`{"name":%q,"origin":%q,"version":%q,"abi":"FreeBSD:15:amd64","arch":"freebsd:15:x86:64","comment":"Test package","desc":"Test package","maintainer":"test@example.org","www":"https://example.org","prefix":"/usr/local","flatsize":0,"licenselogic":"single"}`, name, "devel/"+name, version)
+	return liveFixtureOriginManifest(name, "devel/"+name, version)
+}
+
+func liveFixtureOriginManifest(name, origin, version string) string {
+	return fmt.Sprintf(`{"name":%q,"origin":%q,"version":%q,"abi":"FreeBSD:15:amd64","arch":"freebsd:15:x86:64","comment":"Test package","desc":"Test package","maintainer":"test@example.org","www":"https://example.org","prefix":"/usr/local","flatsize":0,"licenselogic":"single"}`, name, origin, version)
 }
 
 func liveFixtureArchive(t *testing.T, manifest string) []byte {
@@ -63,6 +67,12 @@ func liveFixtureCatalogEntry(manifest, path string, data []byte) []byte {
 }
 
 func TestLivePackageInstallBeforeBulkCommit(t *testing.T) {
+	for _, source := range []string{"upstream", "built", "fetched"} {
+		t.Run(source, func(t *testing.T) { testLivePackageInstall(t, source) })
+	}
+}
+
+func testLivePackageInstall(t *testing.T, dependencySource string) {
 	ctx := t.Context()
 	state := t.TempDir()
 	cfg := DefaultBuilderConfig()
@@ -73,15 +83,23 @@ func TestLivePackageInstallBeforeBulkCommit(t *testing.T) {
 	logDir := filepath.Join(cfg.BaseFS, "data/logs/bulk", cfg.Jail+"-"+cfg.Ports, run)
 	building := filepath.Join(repoDir, ".building")
 	putLiveFixture(t, filepath.Join(building, ".buildname"), []byte(run+"\n"))
-	const name = "publish-fixture"
-	manifest := liveFixtureManifest(name, "2")
+	const name, origin, version = "firefox", "www/firefox", "161.0,2"
+	firefoxManifest := func(version, builtWithDav1d string) string {
+		base := strings.TrimSuffix(liveFixtureOriginManifest(name, origin, version), "}")
+		return fmt.Sprintf(`%s,"deps":{"dav1d":{"origin":"multimedia/dav1d","version":%q}},"shlibs_required":["libc.so.7","libdav1d.so.7"]}`, base, builtWithDav1d)
+	}
+	manifest := firefoxManifest(version, "1.5.5")
 	archive := liveFixtureArchive(t, manifest)
-	localPath := "All/" + name + "-2.pkg"
+	localPath := "All/" + name + "-" + version + ".pkg"
 	putLiveFixture(t, filepath.Join(building, localPath), archive)
 	for _, other := range []string{"unfinished", "failed"} {
 		putLiveFixture(t, filepath.Join(building, "All", other+"-1.pkg"), liveFixtureArchive(t, liveFixtureManifest(other, "1")))
 	}
-	putLiveFixture(t, filepath.Join(logDir, ".poudriere.ports.built"), []byte("devel/"+name+" "+name+"-2 5\ndevel/unfinished unfinished-1 2"))
+	built := origin + " " + name + "-" + version + " 5\n"
+	if dependencySource == "built" {
+		built += "multimedia/dav1d dav1d-1.5.5 2\n"
+	}
+	putLiveFixture(t, filepath.Join(logDir, ".poudriere.ports.built"), []byte(built+"devel/unfinished unfinished-1 2"))
 	putLiveFixture(t, filepath.Join(logDir, ".poudriere.ports.failed"), []byte("devel/failed failed-1 build error 5\n"))
 
 	upKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -95,30 +113,74 @@ func TestLivePackageInstallBeforeBulkCommit(t *testing.T) {
 	pub := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
 	trust := t.TempDir()
 	putLiveFixture(t, filepath.Join(trust, "trusted", "repo"), fmt.Appendf(nil, "function: \"sha256\"\nfingerprint: \"%x\"\n", sha256.Sum256(pub)))
-	upRow := liveFixtureCatalogEntry(liveFixtureManifest(name, "1"), "All/"+name+"-1.pkg", []byte("upstream"))
-	upArchive := upstreamFixture(t, upKey, "packagesite.yaml", upRow, pub, false)
+	const dav1dPath = "All/dav1d-1.5.4_1.pkg"
+	dav1dManifest := strings.TrimSuffix(liveFixtureOriginManifest("dav1d", "multimedia/dav1d", "1.5.4_1"), "}") + `,"shlibs_provided":["libdav1d.so.7"]}`
+	dav1dArchive := liveFixtureArchive(t, dav1dManifest)
+	wantDav1d := dav1dArchive
+	wantVersion := "1.5.4_1"
+	const newDepPath = "All/dav1d-1.5.5.pkg"
+	var depEntry []byte
+	if dependencySource != "upstream" {
+		// The existing compiled package and verified FreeBSD catalog both
+		// offer 1.5.4_1, as on the reported worker.
+		putLiveFixture(t, filepath.Join(repoDir, ".real_old", dav1dPath), dav1dArchive)
+		if err := os.Symlink(".real_old/All", filepath.Join(repoDir, "All")); err != nil {
+			t.Fatal(err)
+		}
+		oldRow := liveFixtureCatalogEntry(dav1dManifest, dav1dPath, dav1dArchive)
+		index, err := signedPkg(upKey, "data", fmt.Appendf(nil, `{"packages":[%s]}`, oldRow))
+		if err != nil {
+			t.Fatal(err)
+		}
+		putLiveFixture(t, filepath.Join(repoDir, "data.pkg"), index)
+		wantVersion = "1.5.5"
+		newManifest := strings.Replace(dav1dManifest, "1.5.4_1", wantVersion, 1)
+		wantDav1d = liveFixtureArchive(t, newManifest)
+		depEntry = liveFixtureCatalogEntry(newManifest, newDepPath, wantDav1d)
+		putLiveFixture(t, filepath.Join(building, newDepPath), wantDav1d)
+		if dependencySource == "fetched" {
+			cacheDir := filepath.Join(repoDir, ".pkg-cache")
+			if err := os.MkdirAll(cacheDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Link(filepath.Join(building, newDepPath), filepath.Join(cacheDir, filepath.Base(newDepPath))); err != nil {
+				t.Fatal(err)
+			}
+			putLiveFixture(t, filepath.Join(logDir, ".poudriere.ports.fetched"), []byte("multimedia/dav1d dav1d-1.5.5\n"))
+		}
+	}
+	upRows := bytes.Join([][]byte{
+		liveFixtureCatalogEntry(firefoxManifest("160.0,2", "1.5.4_1"), "All/firefox-160.0,2.pkg", []byte("upstream")),
+		liveFixtureCatalogEntry(dav1dManifest, dav1dPath, dav1dArchive),
+	}, []byte("\n"))
+	upArchive := upstreamFixture(t, upKey, "packagesite.yaml", upRows, pub, false)
 	var upstreamRequests atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamRequests.Add(1)
-		if r.URL.Path != "/packagesite.pkg" {
+		switch r.URL.Path {
+		case "/packagesite.pkg":
+			w.Write(upArchive)
+		case "/" + dav1dPath:
+			w.Write(dav1dArchive)
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		w.Write(upArchive)
 	}))
 	defer up.Close()
 	cat, err := NewCatalog(state, up.URL, trust, repoDir, up.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
+	cat.jailRoot = filepath.Join(cfg.BaseFS, "jails", cfg.Jail)
+	putLiveFixture(t, filepath.Join(cat.jailRoot, "lib", "libc.so.7"), []byte("base system library"))
 	if err := cat.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
 	before := upstreamRequests.Load()
-	// Start the real monitor mid-bulk, just as a new web process would
-	// after a service restart. It must discover previous successful jobs.
+	// The worker has restarted and its status describes no active job, but
+	// Poudriere retained this named stage and the matching success list.
 	cfg.StatusFile = filepath.Join(t.TempDir(), "build.json")
-	status, err := json.Marshal(BuildStatus{Active: true, Stage: "building", Started: started})
+	status, err := json.Marshal(BuildStatus{Stage: "waiting"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,13 +191,33 @@ func TestLivePackageInstallBeforeBulkCommit(t *testing.T) {
 		defer close(done)
 		monitorLivePackages(monitorCtx, options{builder: cfg, localRepo: repoDir}, cat)
 	}()
-	for cat.current.Load().compiled[name].Version != "2" && monitorCtx.Err() == nil {
+	for cat.current.Load().compiled[name].Version != version && monitorCtx.Err() == nil {
 		time.Sleep(10 * time.Millisecond)
 	}
 	stop()
 	<-done
-	if cat.current.Load().compiled[name].Version != "2" {
-		t.Fatal("monitor did not publish the completed package from an active bulk")
+	if cat.current.Load().compiled[name].Version != version {
+		t.Fatal("monitor did not publish the completed package from the retained native stage")
+	}
+	// A jail upgrade can supply a previously missing library while the
+	// archives and upstream revision are unchanged.
+	candidates := cat.live
+	libc := filepath.Join(cat.jailRoot, "lib", "libc.so.7")
+	if err := os.Remove(libc); err != nil {
+		t.Fatal(err)
+	}
+	if !cat.publicationInputsChanged() {
+		t.Fatal("missed a change in the target jail's libraries")
+	}
+	if err := cat.PublishLive(ctx, candidates); err != nil {
+		t.Fatal(err)
+	}
+	if h := cat.current.Load().liveHolds[name+"-"+version]; !strings.Contains(h.reason, "libc.so.7") {
+		t.Fatalf("missing jail library did not hold Firefox: %+v", h)
+	}
+	putLiveFixture(t, libc, []byte("base system library"))
+	if err := cat.PublishLive(ctx, candidates); err != nil {
+		t.Fatal(err)
 	}
 	if upstreamRequests.Load() != before {
 		t.Fatal("publishing a local package contacted the upstream repository")
@@ -145,7 +227,11 @@ func TestLivePackageInstallBeforeBulkCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	clientRepo := httptest.NewServer(&repository{catalog: cat, localDir: repoDir, store: inventory{db}})
+	cache, err := newPackageCache(t.TempDir(), 1<<20, cat.upstream, up.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientRepo := httptest.NewServer(&repository{catalog: cat, cache: cache, localDir: repoDir, store: inventory{db}})
 	defer clientRepo.Close()
 	get := func(path string) []byte {
 		t.Helper()
@@ -177,9 +263,31 @@ func TestLivePackageInstallBeforeBulkCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected := content.byName[name].pkg
-	if len(content.byName) != 1 || selected.Version != "2" || selected.Sum != fmt.Sprintf("%x", sha256.Sum256(archive)) {
+	firefoxEntry := content.byName[name]
+	selected := firefoxEntry.pkg
+	if len(content.byName) != 2 || selected.Version != version || selected.Sum != fmt.Sprintf("%x", sha256.Sum256(archive)) {
 		t.Fatalf("unexpected packages during the bulk: %+v", content.byName)
+	}
+	var firefoxMetadata struct {
+		Deps map[string]struct{ Version string }
+	}
+	if err := json.Unmarshal(firefoxEntry.raw, &firefoxMetadata); err != nil || firefoxMetadata.Deps["dav1d"].Version != "1.5.5" {
+		t.Fatalf("published Firefox manifest lost its build dependency version: %s", firefoxEntry.raw)
+	}
+	dep := content.byName["dav1d"].pkg
+	if dep.Version != wantVersion || !bytes.Equal(get(dep.Path), wantDav1d) {
+		t.Fatalf("wanted dav1d %s in signed catalog, got %+v", wantVersion, dep)
+	}
+	snapshot := cat.current.Load()
+	switch dependencySource {
+	case "built":
+		if snapshot.compiled["dav1d"].Version != wantVersion || snapshot.ahead != 2 {
+			t.Fatalf("newer compiled dependency missing from build counts")
+		}
+	case "fetched":
+		if !snapshot.fetched["dav1d"] || snapshot.compiled["dav1d"].Version != "1.5.4_1" || snapshot.ahead != 1 {
+			t.Fatalf("worker-fetched dependency counted as a local build")
+		}
 	}
 	if !bytes.Equal(get(selected.Path), archive) {
 		t.Fatal("live package contents differ")
@@ -200,35 +308,48 @@ func TestLivePackageInstallBeforeBulkCommit(t *testing.T) {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("pkg install --fetch-only: %v\n%s", err, out)
 		}
-		found := false
+		var foundFirefox, foundDav1d bool
 		err := filepath.WalkDir(filepath.Join(dir, "cache"), func(path string, entry fs.DirEntry, err error) error {
 			if err != nil || !entry.Type().IsRegular() || filepath.Ext(path) != ".pkg" {
 				return err
 			}
 			body, err := os.ReadFile(path)
-			found = found || bytes.Equal(body, archive)
+			foundFirefox = foundFirefox || bytes.Equal(body, archive)
+			foundDav1d = foundDav1d || bytes.Equal(body, wantDav1d)
 			return err
 		})
-		if err != nil || !found {
-			t.Fatalf("pkg did not cache the live archive: %v", err)
+		if err != nil || !foundFirefox || !foundDav1d {
+			t.Fatalf("pkg install --fetch-only cache: Firefox %t, dav1d %t, error %v", foundFirefox, foundDav1d, err)
 		}
 	})
+	before = upstreamRequests.Load()
 
 	// Poudriere's commit replaces .building. Previously advertised paths
 	// must still work for clients who refreshed their pkg catalog earlier.
 	if err := os.Rename(building, filepath.Join(repoDir, ".real_"+run)); err != nil {
 		t.Fatal(err)
 	}
+	if dependencySource != "upstream" {
+		if err := os.Remove(filepath.Join(repoDir, "All")); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.Symlink(filepath.Join(".real_"+run, "All"), filepath.Join(repoDir, "All")); err != nil {
 		t.Fatal(err)
 	}
-	finalIndex, err := signedPkg(upKey, "packagesite.yaml", liveFixtureCatalogEntry(manifest, localPath, archive))
+	// A native data-only commit must publish from the verified baseline even
+	// if the upstream mirror is unavailable at that moment.
+	entry := liveFixtureCatalogEntry(manifest, localPath, archive)
+	if len(depEntry) > 0 {
+		entry = bytes.Join([][]byte{entry, depEntry}, []byte(","))
+	}
+	finalIndex, err := signedPkg(upKey, "data", fmt.Appendf(nil, `{"packages":[%s]}`, entry))
 	if err != nil {
 		t.Fatal(err)
 	}
-	putLiveFixture(t, filepath.Join(repoDir, "packagesite.pkg"), finalIndex)
-	if err := cat.Refresh(ctx); err != nil {
-		t.Fatal(err)
+	putLiveFixture(t, filepath.Join(repoDir, "data.pkg"), finalIndex)
+	if !cat.publicationInputsChanged() {
+		t.Fatal("missed the committed native data.pkg")
 	}
 	if err := cat.PublishLive(ctx, nil); err != nil {
 		t.Fatal(err)
@@ -236,15 +357,22 @@ func TestLivePackageInstallBeforeBulkCommit(t *testing.T) {
 	if !bytes.Equal(get(localPath), archive) || !bytes.Equal(get(selected.Path), archive) {
 		t.Fatal("a package download changed across the bulk commit")
 	}
+	if depEntry != nil && (!bytes.Equal(get(newDepPath), wantDav1d) || !bytes.Equal(get(dep.Path), wantDav1d)) {
+		t.Fatal("the committed or previously advertised dependency is unavailable")
+	}
+	if cat.publicationInputsChanged() || upstreamRequests.Load() != before {
+		t.Fatal("local commit did not reconcile independently of upstream")
+	}
 
 	later := started.Add(30 * time.Second)
 	nextRun := later.Format(buildNameFormat)
-	uncommitted := liveFixtureArchive(t, liveFixtureManifest(name, "3"))
+	const laterVersion = "161.0_1,2"
+	uncommitted := liveFixtureArchive(t, firefoxManifest(laterVersion, "1.5.5"))
 	putLiveFixture(t, filepath.Join(building, ".buildname"), []byte(nextRun+"\n"))
-	putLiveFixture(t, filepath.Join(building, "All", name+"-3.pkg"), uncommitted)
-	putLiveFixture(t, filepath.Join(filepath.Dir(logDir), nextRun, ".poudriere.ports.built"), []byte("devel/"+name+" "+name+"-3 5\n"))
+	putLiveFixture(t, filepath.Join(building, "All", name+"-"+laterVersion+".pkg"), uncommitted)
+	putLiveFixture(t, filepath.Join(filepath.Dir(logDir), nextRun, ".poudriere.ports.built"), []byte(origin+" "+name+"-"+laterVersion+" 5\n"))
 	staging := liveArchiveStore{dir: cat.liveDir, repoDir: repoDir}
-	live, err := staging.scan(ctx, cfg, later)
+	live, err := staging.scan(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +380,7 @@ func TestLivePackageInstallBeforeBulkCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	pkg := cat.current.Load().compiled[name]
-	if pkg.Version != "3" {
+	if pkg.Version != laterVersion {
 		t.Fatalf("second build did not publish: %+v", pkg)
 	}
 	// If Poudriere discards the next bulk, revert to its last committed
@@ -263,7 +391,7 @@ func TestLivePackageInstallBeforeBulkCommit(t *testing.T) {
 	if err := cat.PublishLive(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if cat.current.Load().compiled[name].Version != "2" || !bytes.Equal(get(pkg.Path), uncommitted) {
+	if cat.current.Load().compiled[name].Version != version || !bytes.Equal(get(pkg.Path), uncommitted) {
 		t.Fatal("rollback lost the committed package or invalidated an advertised URL")
 	}
 }

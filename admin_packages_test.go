@@ -66,6 +66,66 @@ func TestPackageInventoryArchivesAndConsumers(t *testing.T) {
 	}
 }
 
+func TestInventoryShowsPublishedWorkerFetch(t *testing.T) {
+	const name, origin = "dav1d", "multimedia/dav1d"
+	old := CatalogPackage{Name: name, Origin: origin, BuildOrigin: origin, Version: "1.5.4_1", Size: 680000, Path: "All/dav1d-1.5.4_1.pkg", Local: true}
+	upstream := old
+	upstream.Local = false
+	fetched := old
+	fetched.Version, fetched.Size, fetched.Path = "1.5.5", 710000, "All/dav1d-1.5.5.pkg"
+	s := &catalogSnapshot{
+		compiled:   map[string]CatalogPackage{name: old},
+		displaced:  map[string]CatalogPackage{name: upstream},
+		byPath:     map[string]CatalogPackage{fetched.Path: fetched},
+		pathByName: map[string]string{name: fetched.Path},
+		fetched:    map[string]bool{name: true},
+	}
+	for _, origins := range [][]string{nil, {origin}} {
+		view := managementPackages(s, nil, origins, nil, nil, nil)
+		if len(view.Packages) != 2 || view.Packages[0].Version == view.Packages[1].Version ||
+			view.CompiledBytes == nil || *view.CompiledBytes != old.Size || view.CachedBytes != 0 || view.CachedCount != 0 {
+			t.Fatalf("unexpected archive rows or totals: %+v", view)
+		}
+		for _, row := range view.Packages {
+			switch row.Version {
+			case old.Version:
+				if row.WorkerFetched || !row.Compiled || row.Source != "poudrine" {
+					t.Fatalf("unexpected older compiled row: %+v", row)
+				}
+			case fetched.Version:
+				if !row.WorkerFetched || row.Compiled || row.Cached || row.HistoryOnly || row.Source != "freebsd" ||
+					row.Size == nil || *row.Size != fetched.Size || row.LocalVersion != old.Version || row.FreeBSDVersion != upstream.Version {
+					t.Fatalf("unexpected published dependency row: %+v", row)
+				}
+			default:
+				t.Fatalf("unexpected package: %+v", row)
+			}
+		}
+	}
+	cache := []cachedArchive{{Key: "cached-dav1d", Package: fetched, Used: time.Unix(42, 0)}}
+	tracked := []trackedPackageRecord{{Name: name, Origin: origin, Consumers: 1}}
+	view := managementPackages(s, tracked, nil, cache, nil, nil)
+	if len(view.Packages) != 2 || view.CachedCount != 1 || view.CachedBytes != fetched.Size {
+		t.Fatalf("duplicate worker fetch or incorrect HTTP cache totals: %+v", view)
+	}
+	var combined bool
+	for _, row := range view.Packages {
+		if row.WorkerFetched && row.Cached && row.Tracked && row.CacheKey == cache[0].Key && row.LastSeen == 42 {
+			combined = true
+		}
+	}
+	if !combined {
+		t.Fatalf("missing storage details for published worker fetch: %+v", view.Packages)
+	}
+	// A worker-fetched archive can be older than the upstream catalog.
+	// Only include fetches that Poudrine actually offers to clients.
+	s.byPath = map[string]CatalogPackage{upstream.Path: upstream}
+	s.pathByName[name] = upstream.Path
+	if view := managementPackages(s, nil, nil, nil, nil, nil); len(view.Packages) != 1 || view.Packages[0].WorkerFetched {
+		t.Fatalf("unpublished worker fetch appeared in inventory: %+v", view)
+	}
+}
+
 func TestInventoryMatchesPublishedBuildVersion(t *testing.T) {
 	db, err := openInventory(t.TempDir(), false)
 	if err != nil {

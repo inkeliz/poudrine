@@ -17,138 +17,318 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
-// The poller serializes scans. Only this Poudriere run's successful builds
-// can add archives. Completed captures survive the native repository rename.
+// The native stage and its marker identify a run even when the worker has
+// restarted. A successful log entry alone cannot publish a package.
 type liveArchiveStore struct {
-	dir, repoDir string
-	started      time.Time
-	packages     map[string]livePackage
-	failures     map[string]liveCaptureFailure
+	dir, repoDir     string
+	offeredVersion   func(string) string
+	offered          map[string]string
+	started          time.Time
+	stage            os.FileInfo
+	inputs           [5]os.FileInfo // All, Hashed, built, fetched, and the fetch cache
+	inherited        map[string]inheritedBuild
+	inheritedSources map[string]os.FileInfo
+	priorFetches     map[string][]string
+	retryFetch       time.Time
+	sources          map[string]os.FileInfo
+	packages         map[string]livePackage
+	failures         map[string]liveCaptureFailure
 }
 
 type liveCaptureFailure struct {
+	origin  string
 	message string
 	retry   time.Time
 }
 
-func (s *liveArchiveStore) scan(ctx context.Context, cfg BuilderConfig, started time.Time) (map[string]livePackage, error) {
-	if !s.started.Equal(started) {
-		s.started = started
-		s.packages = make(map[string]livePackage)
-		s.failures = make(map[string]liveCaptureFailure)
-	}
-	if started.IsZero() {
-		return nil, nil
-	}
-	err := s.scanRun(ctx, cfg, started.UTC().Format(buildNameFormat))
-	if errors.Is(err, os.ErrNotExist) {
-		err = nil // The worker may be preparing the queue or committing it.
-	}
-	return maps.Clone(s.packages), err
+func (s *liveArchiveStore) reset(stage os.FileInfo, started time.Time) {
+	*s = liveArchiveStore{dir: s.dir, repoDir: s.repoDir, offeredVersion: s.offeredVersion, stage: stage, started: started,
+		packages: make(map[string]livePackage), sources: make(map[string]os.FileInfo), failures: make(map[string]liveCaptureFailure)}
 }
 
-func (s *liveArchiveStore) scanRun(ctx context.Context, cfg BuilderConfig, name string) error {
-	logs, err := openBulkLogs(cfg)
-	if err != nil {
-		return err
-	}
-	defer logs.Close()
-	run, err := openLogPath(logs, cfg.Jail+"-"+cfg.Ports+"/"+name, true)
-	if err != nil {
-		return err
-	}
-	defer run.Close()
-
-	repo, err := os.OpenFile(s.repoDir, os.O_RDONLY|syscall.O_DIRECTORY, 0)
-	if err != nil {
-		return err
-	}
-	defer repo.Close()
-	stage, err := openLogPath(repo, ".building", true)
-	if err != nil {
-		return err
-	}
-	defer stage.Close()
-	// Poudriere writes .buildname before launching builders. Check it via the
-	// same directory descriptor used for All, even across an atomic commit.
+func stageBuildName(stage *os.File) (time.Time, error) {
 	marker, err := openLogPath(stage, ".buildname", false)
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
 	defer marker.Close()
-	st, err := marker.Stat()
+	info, err := marker.Stat()
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
-	if !st.Mode().IsRegular() {
-		return errors.New("unexpected Poudriere .buildname file")
+	if !info.Mode().IsRegular() || info.Size() > 128 {
+		return time.Time{}, errors.New("invalid Poudriere stage marker")
 	}
-	id, err := io.ReadAll(io.LimitReader(marker, 128))
-	if err != nil || strings.TrimSpace(string(id)) != name {
-		return err
+	data, err := io.ReadAll(io.LimitReader(marker, 129))
+	if err != nil {
+		return time.Time{}, err
 	}
+	name := strings.TrimSpace(string(data))
+	t, err := time.Parse(buildNameFormat, name)
+	if err != nil || name != t.Format(buildNameFormat) {
+		return time.Time{}, errors.New("stage has no Poudrine build name")
+	}
+	return t, nil
+}
+
+func (s *liveArchiveStore) scan(ctx context.Context, cfg BuilderConfig) (map[string]livePackage, error) {
+	path := filepath.Join(s.repoDir, ".building")
+	stage, err := os.OpenFile(path, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		if s.stage != nil {
+			s.reset(nil, time.Time{})
+		}
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer stage.Close()
+	info, err := stage.Stat()
+	if err != nil {
+		return nil, err
+	}
+	started, err := stageBuildName(stage)
+	if err != nil {
+		return nil, err
+	}
+	// A fresh .building begins as a hardlinked copy of .latest, with the
+	// previous run's marker until Poudriere has finished preparing the queue.
+	// Its archives are already served through the committed repository.
+	if committed, err := os.OpenFile(filepath.Join(s.repoDir, ".latest"), os.O_RDONLY|syscall.O_DIRECTORY, 0); err == nil {
+		published, readErr := stageBuildName(committed)
+		committed.Close()
+		if readErr == nil && published.Equal(started) {
+			s.reset(nil, time.Time{})
+			return nil, nil
+		}
+	}
+	if s.stage == nil || !os.SameFile(s.stage, info) || !s.started.Equal(started) {
+		s.reset(info, started)
+	}
+	logs, err := openBulkLogs(cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer logs.Close()
+	master, err := openLogPath(logs, cfg.Jail+"-"+cfg.Ports, true)
+	if err != nil {
+		return nil, err
+	}
+	defer master.Close()
+	run, err := openLogPath(master, started.Format(buildNameFormat), true)
+	if err != nil {
+		return nil, err
+	}
+	defer run.Close()
 	all, err := openLogPath(stage, "All", true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer all.Close()
 
-	err = scanBuildResults(ctx, run, "built", func(_ string, fields []string) bool {
-		origin, id := fields[0], fields[1]
+	// Completed native archives are renamed into All. A settled stage can
+	// stay here for days. Its directory and result-list identities let each
+	// poll skip the per-package I/O until another package arrives or goes.
+	var inputs [5]os.FileInfo
+	inputs[0], err = all.Stat()
+	if err != nil {
+		return nil, err
+	}
+	logDir := filepath.Join(cfg.BaseFS, "data", "logs", "bulk", cfg.Jail+"-"+cfg.Ports, started.Format(buildNameFormat))
+	for i, path := range []string{filepath.Join(path, "All", "Hashed"), filepath.Join(logDir, ".poudriere.ports.built"), filepath.Join(logDir, ".poudriere.ports.fetched"), filepath.Join(s.repoDir, ".pkg-cache")} {
+		inputs[i+1], err = os.Lstat(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
+	if s.unchanged(inputs) {
+		return maps.Clone(s.packages), nil
+	}
+	// A resumed native stage may be undergoing deletions and replacements.
+	// Reconcile the whole set against this pass's successful, verified files.
+	next := make(map[string]livePackage, len(s.packages))
+	s.offered = make(map[string]string)
+	results := make(map[string]bool)
+	visit := func(id, origin string, stamp time.Time) {
+		results[id] = true
 		name, version := splitBuildPackage(id)
-		if name == "" || s.packages[name].manifest.pkg.Version == version {
-			return true
+		if old := next[name]; old.file != nil && comparePkgVersions(old.manifest.pkg.Version, version) >= 0 {
+			return
 		}
-		failure := s.failures[id]
-		if time.Now().Before(failure.retry) {
-			return true
-		}
-		p, err := s.capture(ctx, all, id, origin)
+		p, err := s.stagedPackage(ctx, all, id, origin, stamp)
 		if err != nil {
 			if ctx.Err() != nil {
-				return false
+				return
 			}
-			// A failed copy (e.g. temporary low disk space) can be retried.
-			// Other builders in the same batch can still publish normally.
-			if !errors.Is(err, os.ErrNotExist) && err.Error() != failure.message {
+			previous := s.failures[id]
+			if !errors.Is(err, os.ErrNotExist) && err.Error() != previous.message {
 				log.Printf("stage built package %s: %v", id, err)
 			}
-			s.failures[id] = liveCaptureFailure{message: err.Error(), retry: time.Now().Add(time.Minute)}
-			return true
+			s.failures[id] = liveCaptureFailure{origin: origin, message: err.Error(), retry: time.Now().Add(time.Minute)}
 		}
-		delete(s.failures, id)
-		s.packages[name] = p
-		return true
-	})
-	if err == nil {
-		err = ctx.Err()
+		if p.file != nil {
+			next[p.manifest.pkg.Name] = p
+		}
 	}
-	return err
+	if err := scanBuildResults(ctx, run, "built", func(_ string, fields []string) bool {
+		visit(fields[1], fields[0], time.Time{})
+		return ctx.Err() == nil
+	}); err != nil {
+		return nil, err
+	}
+	inherited, err := s.inheritedBuilds(ctx, master, all, next)
+	if err != nil {
+		return nil, err
+	}
+	s.inherited = inherited
+	for id, build := range s.inherited {
+		visit(id, build.origin, build.stamp)
+	}
+	for id := range s.failures {
+		if !results[id] {
+			delete(s.failures, id)
+		}
+	}
+	if err := s.addFetchedDependencies(ctx, master, run, all, next); err != nil {
+		if ctx.Err() == nil && !time.Now().Before(s.retryFetch) {
+			log.Printf("stage worker-fetched dependencies: %v", err)
+		}
+		s.retryFetch = time.Now().Add(time.Minute)
+	} else {
+		s.retryFetch = time.Time{}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	latest, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		s.reset(nil, time.Time{})
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	current, err := stageBuildName(stage)
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(latest, info) || !current.Equal(started) {
+		return nil, errors.New("Poudriere stage changed during capture")
+	}
+	s.packages = next
+	s.inputs = inputs
+	return maps.Clone(next), nil
 }
 
-func (s *liveArchiveStore) capture(ctx context.Context, all *os.File, id, origin string) (livePackage, error) {
-	source, err := openLogPath(all, id+".pkg", false)
+func (s *liveArchiveStore) unchanged(inputs [5]os.FileInfo) bool {
+	for i, current := range inputs {
+		previous := s.inputs[i]
+		if (current == nil) != (previous == nil) || current != nil && !sameArchive(previous, current) {
+			return false
+		}
+	}
+	for _, failure := range s.failures {
+		if !time.Now().Before(failure.retry) {
+			return false
+		}
+	}
+	if !s.retryFetch.IsZero() && !time.Now().Before(s.retryFetch) {
+		return false
+	}
+	for name, version := range s.offered {
+		if s.offeredVersion == nil {
+			return false
+		}
+		if baseline := s.offeredVersion(name); baseline == "" || comparePkgVersions(baseline, version) < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *liveArchiveStore) versionAlreadyOffered(name, version string) bool {
+	if s.offeredVersion == nil {
+		return false
+	}
+	baseline := s.offeredVersion(name)
+	if baseline == "" || comparePkgVersions(baseline, version) < 0 {
+		return false
+	}
+	if old := s.offered[name]; old == "" || comparePkgVersions(version, old) > 0 {
+		s.offered[name] = version
+	}
+	return true
+}
+
+// pkg repo --hash --symlink puts a relative alias at All/<pkg>.pkg.
+// Resolve that one native layout descriptor-relatively, rejecting any other
+// target or nested symlink. The manifest and complete archive are checked next.
+func openStageArchive(all *os.File, id string) (*os.File, error) {
+	f, err := openLogPath(all, id+".pkg", false)
+	// O_NOFOLLOW reports EMLINK on FreeBSD and ELOOP on Linux.
+	if !errors.Is(err, syscall.EMLINK) && !errors.Is(err, syscall.ELOOP) {
+		return f, err
+	}
+	var buf [512]byte
+	n, err := unix.Readlinkat(int(all.Fd()), id+".pkg", buf[:])
+	if err != nil {
+		return nil, err
+	}
+	target := string(buf[:n])
+	name, ok := strings.CutPrefix(target, "Hashed/")
+	if !ok || !isHashedArchive(name, id) {
+		return nil, errors.New("unexpected Poudriere package symlink")
+	}
+	return openLogPath(all, target, false)
+}
+
+func isHashedArchive(name, id string) bool {
+	suffix, ok := strings.CutPrefix(name, id+"~")
+	hash, ext := strings.CutSuffix(suffix, ".pkg")
+	return ok && ext && hash != "" && strings.Trim(hash, "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ$") == ""
+}
+
+func (s *liveArchiveStore) stagedPackage(ctx context.Context, all *os.File, id, origin string, stamp time.Time) (livePackage, error) {
+	name, version := splitBuildPackage(id)
+	if name == "" || time.Now().Before(s.failures[id].retry) {
+		return livePackage{}, nil
+	}
+	source, err := openStageArchive(all, id)
 	if err != nil {
 		return livePackage{}, err
 	}
 	defer source.Close()
-	before, err := source.Stat()
+	info, err := source.Stat()
 	if err != nil {
 		return livePackage{}, err
 	}
-	if !before.Mode().IsRegular() || before.Size() <= 0 {
-		return livePackage{}, errors.New("unexpected staged package file")
-	}
-	fetched, err := fetchedByPoudriere(s.repoDir, id+".pkg", before)
+	fetched, err := fetchedByPoudriere(s.repoDir, id+".pkg", info)
 	if err != nil {
 		return livePackage{}, err
 	}
 	if fetched {
 		return livePackage{}, errors.New("staged archive belongs to Poudriere's download cache")
 	}
+	if old := s.packages[name]; !old.fetched && old.manifest.pkg.Version == version && old.file != nil && s.sources[id] != nil && sameArchive(s.sources[id], info) {
+		return old, nil
+	}
+	p, err := s.capture(ctx, source, info, id, origin, stamp)
+	if err == nil {
+		s.sources[id] = info
+		delete(s.failures, id)
+	}
+	return p, err
+}
 
+func (s *liveArchiveStore) capture(ctx context.Context, source *os.File, before os.FileInfo, id, origin string, stamp time.Time) (livePackage, error) {
+	if !before.Mode().IsRegular() || before.Size() <= 0 {
+		return livePackage{}, errors.New("unexpected staged package file")
+	}
 	if err := os.MkdirAll(s.dir, 0700); err != nil {
 		return livePackage{}, err
 	}
@@ -182,14 +362,13 @@ func (s *liveArchiveStore) capture(ctx context.Context, all *os.File, id, origin
 	}
 	// The result list can omit the default flavor, including when it names
 	// a subpackage. Honor every flavor and subpackage it explicitly names.
-	unflavored := m.pkg.Origin
-	if _, sub, ok := strings.Cut(m.pkg.BuildOrigin, "~"); ok {
-		unflavored += "~" + sub
-	}
-	if m.pkg.Name+"-"+m.pkg.Version != id || (origin != m.pkg.BuildOrigin && origin != unflavored) {
+	if m.pkg.Name+"-"+m.pkg.Version != id || !matchesResultOrigin(m.pkg, origin) {
 		return livePackage{}, fmt.Errorf("compact manifest does not match successful build %s %s", origin, id)
 	}
 
+	if !stamp.IsZero() && !archiveBuildTime(m.raw).Equal(stamp) {
+		return livePackage{}, errors.New("retained archive differs from recorded build timestamp")
+	}
 	dest := filepath.Join(s.dir, sum+".pkg")
 	// Link only validated bytes into the addressable namespace. A prior run
 	// may already own this path; verify those bytes before reusing the inode.
@@ -216,6 +395,14 @@ func (s *liveArchiveStore) capture(ctx context.Context, all *os.File, id, origin
 	return livePackage{manifest: m, file: &compiledArchive{path: dest, info: info, verified: true}}, nil
 }
 
+func matchesResultOrigin(p CatalogPackage, origin string) bool {
+	unflavored := p.Origin
+	if _, sub, ok := strings.Cut(p.BuildOrigin, "~"); ok {
+		unflavored += "~" + sub
+	}
+	return origin == p.BuildOrigin || origin == unflavored
+}
+
 // Read the compact header from the same descriptor whose bytes the caller
 // hashed. Keep pkg's complete manifest, including dependencies and future
 // fields, and supply the fields a repository adds to an archive's manifest.
@@ -227,21 +414,7 @@ func readLiveManifest(f *os.File, sum string) (manifest, error) {
 	if len(sum) != 64 || !isHex(sum) || sum != strings.ToLower(sum) || !info.Mode().IsRegular() {
 		return manifest{}, errors.New("invalid live package archive")
 	}
-	const limit = 4 << 20
-	src, err := decompressArchive(io.NewSectionReader(f, 0, limit+512))
-	if err != nil {
-		return manifest{}, err
-	}
-	defer src.Close()
-	t := tar.NewReader(io.LimitReader(src, limit+512))
-	h, err := t.Next()
-	if err != nil {
-		return manifest{}, err
-	}
-	if strings.TrimPrefix(h.Name, "./") != "+COMPACT_MANIFEST" || h.Typeflag != tar.TypeReg || h.Size <= 0 || h.Size > limit {
-		return manifest{}, errors.New("missing or invalid +COMPACT_MANIFEST header")
-	}
-	raw, err := io.ReadAll(t)
+	raw, err := liveCompactJSON(f)
 	if err != nil {
 		return manifest{}, err
 	}
@@ -272,4 +445,22 @@ func readLiveManifest(f *os.File, sum string) (manifest, error) {
 		}
 	}
 	return manifest{}, errors.New("invalid package identity in compact manifest")
+}
+
+func liveCompactJSON(f *os.File) ([]byte, error) {
+	const limit = 4 << 20
+	src, err := decompressArchive(io.NewSectionReader(f, 0, limit+512))
+	if err != nil {
+		return nil, err
+	}
+	defer src.Close()
+	t := tar.NewReader(io.LimitReader(src, limit+512))
+	h, err := t.Next()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimPrefix(h.Name, "./") != "+COMPACT_MANIFEST" || h.Typeflag != tar.TypeReg || h.Size <= 0 || h.Size > limit {
+		return nil, errors.New("missing or invalid +COMPACT_MANIFEST header")
+	}
+	return io.ReadAll(t)
 }

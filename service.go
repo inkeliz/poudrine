@@ -174,6 +174,7 @@ func serve(ctx context.Context, o options) error {
 	if err != nil {
 		return err
 	}
+	cat.jailRoot = o.builder.buildJailRoot()
 	cache, err := newPackageCache(filepath.Join(o.state, "cache"), int64(o.cacheGB*1e9), up, client)
 	if err != nil {
 		return err
@@ -189,6 +190,7 @@ func serve(ctx context.Context, o options) error {
 		}
 		snapshot := cat.current.Load()
 		view := managementPackages(snapshot, usage, origins, cache.inventory(snapshot), resolvedPorts(o.builder), builds)
+		describeUnpublished(view.Packages, snapshot, cat.liveScan.Load())
 		view.CacheLimit = cache.limit
 		return view, store.loadBuildTimes(ctx, snapshot, view.Packages)
 	}

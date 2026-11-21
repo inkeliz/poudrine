@@ -866,11 +866,17 @@ function createInventoryView(request, el, node) {
     const source = row.insertCell();
     source.textContent = {freebsd: "FreeBSD", poudrine: "Poudrine"}[p.source] || "—";
     if (p.history_only) {
-      const state = node("small", "Build history only");
-      state.title = "Poudriere built this version. The current catalog has no matching compiled archive.";
-      source.append(state);
+      source.append(node("small", "Build history only"));
+      if (p.publication_note) {
+        const note = node("small", p.publication_note);
+        note.className = "publication-note";
+        source.append(note);
+      }
       if (p.build_abi) source.append(node("small", p.build_abi));
-    } else if (p.compiled || p.cached) source.append(node("small", p.compiled ? "Compiled" : "Cached"));
+    } else {
+      if (p.worker_fetched) source.append(node("small", "Fetched by Poudriere"));
+      if (p.compiled || p.cached) source.append(node("small", p.compiled ? "Compiled" : "Cached"));
+    }
     row.insertCell().textContent = p.port_version || "—";
     const versions = row.insertCell();
     versions.append(p.local_version || "—");

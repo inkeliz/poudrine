@@ -28,11 +28,9 @@ func TestLiveDownloadRetention(t *testing.T) {
 	ready := active.manifest.pkg
 	c.live = map[string]livePackage{ready.Name: active, "waiting": blocked}
 	s := &catalogSnapshot{
-		pathByName:    map[string]string{ready.Name: ready.Path},
-		compiled:      map[string]CatalogPackage{ready.Name: ready},
-		compiledFiles: map[string]*compiledArchive{ready.Name: active.file},
+		byPath: map[string]CatalogPackage{ready.Path: ready},
 	}
-	if err := c.retainLiveDownloads(s); err != nil {
+	if err := c.retainLiveDownloads(s, c.live); err != nil {
 		t.Fatal(err)
 	}
 	hasDownload := func(p CatalogPackage, want bool) {

@@ -76,7 +76,7 @@ cd poudrine
 make install
 ```
 
-To compile on FreeBSD, install Go 1.26 or later with `pkg install go` and download the [latest source archive](https://github.com/inkeliz/poudrine/releases/latest/download/poudrine-src.tar.gz). Extract it, run `make build` as an ordinary user in the extracted directory, then run `make install` as root. The main binary embeds the website and uses SQLite without CGO.
+To compile on FreeBSD, install Go 1.26 or later with `pkg install go`. Use a Git checkout or extract the latest source archive. In the directory containing `go.mod`, `make install` builds the binaries from the current source before installing them. To compile as an ordinary user, run `make build`, then run `make install-built` as root from the same directory. The main binary embeds the website and uses SQLite without CGO. [Download the source archive](https://github.com/inkeliz/poudrine/releases/latest/download/poudrine-src.tar.gz)
 
 ### 2. Bind the service to your network
 
@@ -154,11 +154,22 @@ Under **Management → Service settings → Poudriere builds**, set **Working ho
 
 **Repository clients** shows each IP, its unique package count and its last visit. Select **View packages** to see the names, requested versions and versions in the client’s latest installed-package report. A package that appears in both counts once, even when the versions differ. A client that has only requested catalog metadata can have zero packages.
 
-During a bulk build, Poudrine checks the worker’s successful packages every 15 seconds. It copies finished archives to its state directory and publishes a signed catalog when a package and its declared dependencies are ready. For example, a client can run `pkg update` and then `pkg install firefox` while other ports are still compiling. If an update would remove a shared library provided by the current version, Poudrine holds that update for Poudriere’s final repository.
+During a bulk build, Poudrine checks finished archives every 15 seconds. For example, when Firefox finishes building with dav1d 1.5.5 and the repository still offers 1.5.4_1, Poudrine looks for the 1.5.5 package in the worker’s staging directory. Once both archives pass their publication checks, clients can run `pkg update` and install the new versions while other ports are still compiling.
+
+Package inventory labels a locally built archive **Compiled**. A binary dependency the worker obtained from its package repository appears as **Fetched by Poudriere**. Poudrine trusts the worker’s native fetch records and requires the staged archive to match its download cache, the dependency’s identity and the target ABI. Poudrine signs the catalog with the checksum of the bytes it serves. If the newer archive is unavailable, a compatible published dependency can still satisfy Firefox’s declared package and shared-library requirements.
+
+If a required library is missing, Package inventory names it and Poudrine checks again as providers become available. Updates that remove a previously provided library and packages with explicit `dep_formula` expressions wait for Poudriere’s final repository.
 
 At the end of the run Poudrine switches to Poudriere’s committed repository. Budget temporary disk space for one extra copy of the packages published during a build. Poudrine keeps their download URLs for at least 24 hours after the handoff so clients can finish using an earlier catalog. A `local_repo` pointing to a different repository follows that repository’s own publication schedule.
 
-**Package inventory** can be searched by port, package name or full package ID, such as `firefox-161.0,2`. **Build history only** means the build succeeded and the current catalog has no matching compiled archive. You may see it while publication is pending or after a version has been replaced. **Compiled** shows the archive size once the build is available in the inventory.
+**Package inventory** can be searched by port, package name or full package ID, such as `firefox-161.0,2`. **Build history only** means Poudriere recorded a successful build and the current catalog has no matching compiled archive. The row shows the publication blocker when known, such as an unreadable archive or a missing dependency. After a restart, Poudrine checks the archives still in Poudriere’s staging directory against the native build records. **Compiled** shows the size of an available local archive.
+
+To see which Firefox version clients can install, refresh the signed repository on a client and query it directly.
+
+```sh
+pkg update -f -r Poudrine
+pkg rquery -r Poudrine '%n-%v' firefox
+```
 
 Use **Compiled** for local builds, **Cached** for downloaded archives, or **Different from FreeBSD** for compiled archives whose version differs from FreeBSD’s. After a successful catalog check, Poudrine removes cached copies when a matching local build has the same or a newer version. A newer FreeBSD download stays cached.
 
@@ -185,7 +196,7 @@ Management shows the number and size of compiled archives and cached downloads. 
 
 - **TLS.** For a certificate issued by your local CA, give the service account read access to the PEM chain and matching unencrypted PEM private key. Run `poudrine set-tls -tls-cert /path/to/fullchain.pem -tls-key /path/to/privkey.pem` as root. Supply `-config /path/to/poudrine.json` after `set-tls` for a custom configuration. Restart after renewing files in place. Use `poudrine set-tls -self-signed` to restore automatic certificates. Verify the fingerprint again after an automatic renewal or hostname change.
 - **Private reverse proxy.** Bind backends to loopback, serve clients an HTTPS repository URL and restrict incoming connections to your LAN or VPN. To preserve client attribution, set `trusted_proxy` to the exact proxy address (`/32` or `/128`) and overwrite `X-Real-IP` at that proxy. For a website mounted under a path, include the path in `web_url` and strip the prefix before forwarding.
-- **Upgrade during a build.** From the extracted release, run `make install` as root, then `service poudrine restart`. The service pauses Poudriere and its compilers while the updated web and repository servers start. The same processes then continue the package they were building. A build outside working hours stays paused until its window opens. The supervisor switches to the new binary after the run finishes and carries over queued builds and retries. If you use the optional status reader, run `service poudrine_status restart` separately.
+- **Upgrade during a build.** Install the updated binaries from the new release or checkout using the steps above, then run `service poudrine restart` as root. The service pauses Poudriere and its compilers while the updated web and repository servers start. The same processes then continue the package they were building. A build outside working hours stays paused until its window opens. The supervisor switches to the new binary after the run finishes and carries over queued builds and retries. If you use the optional status reader, run `service poudrine_status restart` separately.
 - **First upgrade from an older release.** A supervisor installed before restart support needs one ordinary stop and start. Let the active build finish, then run `service poudrine stop`, `make install`, and `service poudrine start`. The new rc script reports when this one-time step is needed. An explicit stop or a host shutdown still terminates an active build.
 - **Move the service.** Stop it before copying its private state directory, including `inventory.sqlite`, `repository.key` and the TLS files. Preserve the state directory’s service-account ownership and mode 0700. Keep the root-owned configuration, `<config>.admin.pub` and worker files, including the worker build signing key. A new state directory creates a new repository signing identity, which requires distributing a new public key to clients.
 - **Sign in with a saved browser key.** If you enrolled with an older version, open Management in the original browser profile at the same scheme, hostname and port. Choose **Use saved browser key**.
