@@ -1,0 +1,40 @@
+#!/bin/sh
+
+# PROVIDE: poudrine_status
+# REQUIRE: LOGIN NETWORKING poudrine
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name=poudrine_status
+rcvar=poudrine_status_enable
+desc="Public read-only Poudrine catalog counts"
+
+load_rc_config "$name"
+: "${poudrine_status_enable:=NO}"
+: "${poudrine_status_listen:=[::]:8282}"
+: "${poudrine_status_file:=/var/run/poudrine-status/status.json}"
+: "${poudrine_status_bin:=/usr/local/sbin/poudrine-status}"
+: "${poudrine_status_pidfile:=/var/run/poudrine_status.pid}"
+
+command=/usr/sbin/daemon
+pidfile=$poudrine_status_pidfile
+start_precmd=poudrine_status_prestart
+command_args='-cf -R 10 -P "$pidfile" -S -T poudrine_status -u _poudrine_status "$poudrine_status_bin" -listen "$poudrine_status_listen" -status-file "$poudrine_status_file"'
+
+poudrine_status_prestart()
+{
+	if [ ! -x "$poudrine_status_bin" ]; then
+		warn "cannot execute $poudrine_status_bin"
+		return 1
+	fi
+	if ! /usr/sbin/pw usershow _poudrine_status >/dev/null 2>&1; then
+		/usr/sbin/pw groupshow _poudrine_status >/dev/null 2>&1 ||
+		    /usr/sbin/pw groupadd _poudrine_status || return 1
+		/usr/sbin/pw useradd _poudrine_status -g _poudrine_status -G '' \
+		    -d /nonexistent -s /usr/sbin/nologin -w no \
+		    -c 'Poudrine public statistics service' || return 1
+	fi
+}
+
+run_rc_command "$1"

@@ -1,0 +1,54 @@
+#!/bin/sh
+
+# PROVIDE: poudrine
+# REQUIRE: LOGIN NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name=poudrine
+rcvar=poudrine_enable
+desc="Poudrine package repository and Poudriere build worker"
+
+load_rc_config "$name"
+: "${poudrine_enable:=NO}"
+: "${poudrine_bin:=/usr/local/sbin/poudrine}"
+: "${poudrine_pidfile:=/var/run/poudrine.pid}"
+
+: "${poudrine_config:=/usr/local/etc/poudrine.json}"
+
+command=/usr/sbin/daemon
+pidfile=$poudrine_pidfile
+start_precmd=poudrine_prestart
+restart_cmd=poudrine_restart
+
+poudrine_restart()
+{
+	if [ -z "$rc_pid" ]; then
+		run_rc_command "${_rc_prefix}start"
+		return $?
+	fi
+	"$poudrine_bin" service-restart "$pidfile.restart"
+}
+
+poudrine_prestart()
+{
+	if [ ! -x "$poudrine_bin" ]; then
+		warn "cannot execute $poudrine_bin"
+		return 1
+	fi
+
+	# Import the old rc.conf options once. Subsequent starts use the JSON file.
+	if [ ! -e "$poudrine_config" ] && [ -n "${rc_flags}${poudrine_repo_url}${poudrine_web_url}" ]; then
+		eval "set -- $rc_flags"
+		POUDRINE_REPO_URL="$poudrine_repo_url" POUDRINE_WEB_URL="$poudrine_web_url" \
+		    "$poudrine_bin" migrate-config "$poudrine_config" "$@" || return 1
+	fi
+	command_args="-cf -R 10 -P \"$pidfile\" -S -T poudrine \"$poudrine_bin\" run -config \"$poudrine_config\""
+	# Keep the installed path across upgrades and daemon respawns.
+	export POUDRINE_SERVICE_BIN="$poudrine_bin"
+	export POUDRINE_RESTART_SOCKET="$pidfile.restart"
+	rc_flags=
+}
+
+run_rc_command "$1"

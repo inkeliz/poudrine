@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="form-action 'none'">
+  <title>Management · Poudrine</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="poudrine.js" defer></script>
+</head>
+<body data-enrolled="{{.Enrolled}}">
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-head">
+  <div class="bar">
+    <a class="brand" href="./"><span class="brand-mark" aria-hidden="true"></span>Poudrine</a>
+    <nav aria-label="Main"><a href="./">Client setup</a><a href="admin" aria-current="page">Management</a></nav>
+  </div>
+</header>
+<main id="main">
+  <div class="management-head">
+    <div class="management-title">
+      <h1>Management</h1>
+      <div class="management-actions">
+        <button id="notification-bell" type="button" class="bell-button" aria-label="Build notifications" title="Build notifications" aria-haspopup="dialog" aria-controls="notification-dialog" hidden><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 8a6 6 0 0 0-12 0c0 6-2.5 7.5-3 9h18c-.5-1.5-3-3-3-9ZM10 20a2.2 2.2 0 0 0 4 0"/></svg></button>
+        <button id="logout" type="button" hidden>Sign out</button>
+      </div>
+    </div>
+    <div class="feedback"><p id="message" role="status">Checking administrator setup…</p><button id="retry" type="button" hidden>Retry</button></div>
+  </div>
+  <noscript>Enable JavaScript to use the signed management API.</noscript>
+  <section id="enrollment" class="access-panel" aria-labelledby="enrollment-heading" hidden>
+    <header class="access-intro">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h2 id="enrollment-heading">Create your administrator key</h2>
+      <p>Use the token from your FreeBSD server to enroll this repository. Your browser will generate your sign-in key.</p>
+    </header>
+    <form id="enroll" class="access-fields" method="post">
+      <label for="token">One-time setup token</label>
+      <input required type="password" autocomplete="one-time-code" autocapitalize="none" spellcheck="false" id="token">
+      <button class="primary" type="submit">Create administrator key</button>
+      <details class="access-help"><summary>Where can I find the token?</summary><p>On the FreeBSD server, read <code>/usr/local/etc/poudrine.json.setup-token</code>. For a custom configuration, append <code>.setup-token</code> to its path. Standalone <code>serve</code> writes <code>setup-token</code> in the state directory.</p></details>
+    </form>
+  </section>
+  <section id="key-backup" class="access-panel" aria-labelledby="backup-heading" hidden>
+    <header class="access-intro">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h2 id="backup-heading">Save your private key</h2>
+      <p>Copy this key into your password manager or a private backup. Anyone with a copy can manage this repository.</p>
+    </header>
+    <div class="access-fields">
+      <label for="generated-key">Administrator private key</label>
+      <textarea id="generated-key" rows="4" readonly autocomplete="off" spellcheck="false" aria-describedby="backup-help"></textarea>
+      <p id="backup-help">You’ll need your saved copy on the next screen.</p>
+      <div class="access-actions"><button id="copy-key" type="button">Copy private key</button><button id="key-saved" class="primary" type="button">I’ve saved my key · Sign in</button></div>
+    </div>
+  </section>
+  <section id="signin" class="access-panel" aria-labelledby="signin-heading" hidden>
+    <header class="access-intro">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h2 id="signin-heading">Administrator sign-in</h2>
+      <p id="signin-help">Use the key you saved during setup. Your browser signs requests locally until you sign out or reload.</p>
+    </header>
+    <form id="login" class="access-fields" method="post" autocomplete="on">
+      <input class="access-username" type="text" name="username" value="admin" autocomplete="username" aria-label="Username" aria-hidden="true" tabindex="-1">
+      <label for="private-key">Administrator private key</label>
+      <input id="private-key" type="password" name="password" autocomplete="current-password" autocapitalize="none" spellcheck="false" required aria-describedby="private-key-help">
+      <p id="private-key-help">Paste the complete key or autofill it from your password manager.</p>
+      <button class="primary" id="signin-submit" type="submit">Sign in</button>
+      <button type="button" id="legacy-login" hidden>Use saved browser key</button>
+    </form>
+  </section>
+  <div id="dashboard" hidden>
+    <section id="build" class="build-panel" aria-labelledby="build-heading">
+      <div class="build-panel-head">
+        <h2 id="build-heading">Build activity</h2>
+        <div class="build-actions"><button id="refresh" type="button">Refresh</button><button id="force-build" type="button" class="primary" disabled>Run build now</button></div>
+      </div>
+      <div class="build-columns">
+        <div>
+          <p class="build-state"><span aria-hidden="true"></span><strong id="build-state">Checking worker…</strong></p>
+          <p id="build-message" class="build-description"></p>
+          <div id="build-progress-group" hidden>
+            <div class="progress-caption"><label for="build-progress" id="progress-label">Package progress</label><span id="progress-percent"></span></div>
+            <progress id="build-progress" max="1"></progress>
+            <p id="package-counts"></p>
+          </div>
+          <dl id="build-facts" class="build-facts"></dl>
+        </div>
+        <div class="next-build">
+          <h3 id="next-build-heading">Next build</h3>
+          <p id="next-build-time">Checking schedule…</p>
+          <p id="next-build-detail"></p>
+        </div>
+      </div>
+      <section id="active-jobs" aria-labelledby="job-heading" hidden>
+        <h3 id="job-heading">Running packages</h3>
+        <ul id="build-jobs"></ul>
+      </section>
+      <p id="worker-mode" class="build-feedback" hidden>Manual builds are available when the Poudrine service runs the build worker.</p>
+      <p id="build-feedback" class="build-feedback" role="status" hidden></p>
+      <p id="build-poll-error" class="build-feedback" role="status" hidden></p>
+      <details id="build-issues">
+        <summary>Failed and skipped packages</summary>
+        <div class="issue-toolbar">
+          <label>Build run<select id="issue-run"><option value="">Latest run with issues</option></select></label>
+          <button type="button" id="issue-refresh">Refresh details</button>
+          <button type="button" id="issue-retry-all" hidden>Retry all affected packages</button>
+        </div>
+        <p id="issue-status" role="status"></p>
+        <ul id="issue-list"></ul>
+        <p id="issue-feedback" role="status"></p>
+      </details>
+      <details id="build-log" hidden><summary>Worker output</summary><pre id="build-log-text" tabindex="0" aria-label="Worker output"></pre></details>
+    </section>
+    <section class="panel build-history" aria-labelledby="history-heading">
+      <div class="panel-heading history-head">
+        <h2 id="history-heading">Build history</h2>
+        <div id="history-interval" class="interval-control" role="group" aria-label="Group package builds by">
+          <button type="button" data-interval="hour" aria-pressed="false">Hour</button><button type="button" data-interval="day" aria-pressed="true">Day</button><button type="button" data-interval="week" aria-pressed="false">Week</button><button type="button" data-interval="month" aria-pressed="false">Month</button>
+        </div>
+      </div>
+      <div id="history-body" hidden>
+        <div class="history-summary">
+          <p><strong id="history-count"></strong> <span id="history-range"></span></p>
+          <ul class="history-legend" aria-label="Outcomes">
+            <li><i class="succeeded" aria-hidden="true"></i>Built <b id="total-succeeded">0</b></li>
+            <li><i class="failed" aria-hidden="true"></i>Failed <b id="total-failed">0</b></li>
+          </ul>
+        </div>
+        <div class="history-plot" role="img" id="history-plot" aria-label="Package build history chart">
+          <div class="chart-scale" aria-hidden="true"><span id="chart-max"></span><span id="chart-mid"></span><span>0</span></div>
+          <svg class="chart-bars" id="chart-bars" preserveAspectRatio="none" aria-hidden="true" focusable="false"></svg>
+          <div class="chart-ticks" id="chart-ticks" aria-hidden="true"></div>
+        </div>
+        <p id="history-empty" hidden>No package builds finished during this period.</p>
+        <details id="history-recent" class="history-values" hidden>
+          <summary>Recent package builds <span id="history-recent-count"></span></summary>
+          <div class="table-scroll"><table aria-label="Recent package build results"><thead><tr><th scope="col">Package and version</th><th scope="col">Result</th><th scope="col">Finished (UTC)</th></tr></thead><tbody id="history-recent-values"></tbody></table></div>
+        </details>
+        <details id="history-table-wrap" class="history-values"><summary>View counts by period (UTC)</summary><div class="table-scroll"><table aria-label="Package builds by period in UTC"><thead><tr><th scope="col">Period (UTC)</th><th scope="col">Built</th><th scope="col">Failed</th></tr></thead><tbody id="history-values"></tbody></table></div></details>
+      </div>
+      <div class="history-feedback"><p id="history-message" role="status">Loading build history…</p><button id="history-retry" type="button" hidden>Retry</button></div>
+    </section>
+    <details id="settings" class="panel settings-panel">
+      <summary>Service settings</summary>
+      <form id="settings-form" novalidate autocomplete="off" autocapitalize="none" spellcheck="false">
+        <p class="settings-intro">Edit the values used by this server. Clear an optional override to restore its default.</p>
+        <fieldset id="settings-fields" disabled>
+          <legend class="visually-hidden">Configuration sections</legend>
+          <div class="settings-tabs">
+            <details name="service-settings" class="settings-tab" open>
+              <summary>Network</summary>
+              <div class="settings-body">
+                <h3>Network addresses</h3>
+                <p>Use the addresses clients and administrators can reach. A domain entered on its own uses HTTPS.</p>
+                <div class="settings-grid">
+                  <label>Package repository URL<input name="repo_url" inputmode="url"><small>Include the port your FreeBSD clients use.</small></label>
+                  <label>Website URL<input name="web_url" inputmode="url"><small>Defaults to the address you’re visiting. Set a custom URL to include its hostname in the generated certificate.</small></label>
+                </div>
+                <h3>Listeners and proxy</h3>
+                <div class="settings-grid">
+                  <label>Repository listen address<input name="repo_listen" required></label>
+                  <label>Website listen address<input name="web_listen" required><small>Reconnect at the new address after changing this listener.</small></label>
+                  <label>Trusted proxy CIDR<input name="trusted_proxy" placeholder="No trusted proxy"><small>Your proxy must overwrite <code>X-Real-IP</code>.</small></label>
+                  <label>Web Push contact<input name="push_contact"><small>Email address or HTTPS contact URL.</small></label>
+                </div>
+              </div>
+            </details>
+            <details name="service-settings" class="settings-tab">
+              <summary>Repository</summary>
+              <div class="settings-body">
+                <h3>Package sources</h3>
+                <div class="settings-grid">
+                  <label>Upstream repository URL<input name="upstream" inputmode="url"></label>
+                  <label>Upstream fingerprint directory<input name="fingerprints" required></label>
+                  <label>Local package repository<input name="local_repo"></label>
+                </div>
+                <h3>Cache and refresh</h3>
+                <div class="settings-grid">
+                  <label>Cache size in GB<input name="cache_gb" type="number" step="any" min="0" required></label>
+                  <label>Catalog refresh interval<input name="refresh" required><small>Finishing a build also triggers a catalog check.</small></label>
+                </div>
+              </div>
+            </details>
+            <details name="service-settings" class="settings-tab">
+              <summary>Poudriere builds</summary>
+              <div class="settings-body">
+                <h3>Build schedule</h3>
+                <div class="settings-grid">
+                  <label>Build interval<input name="build_interval" required><small>Time between scheduled jail and ports tree updates.</small></label>
+                  <label>Working hours<input name="working_hours" aria-describedby="hours-help"><small id="hours-help">Enter 24-hour ranges in server time<span id="server-clock"></span>, for example <code>00:00-10:00,11:00-17:00</code>. Ranges can cross midnight. Leave empty to build at any time.</small></label>
+                </div>
+                <h3>Parallel compilation</h3>
+                <div class="settings-grid compact">
+                  <label>Parallel package builders<input name="jobs" type="number" min="1" max="9007199254740991" step="1" required></label>
+                  <label>Make jobs per package<input name="make_jobs_number" type="number" min="0" max="2147483647" step="1" required><small><code>MAKE_JOBS_NUMBER</code>. Use 0 for the default.</small></label>
+                  <label>Make jobs limit per package<input name="make_jobs_number_limit" type="number" min="0" max="2147483647" step="1" required><small><code>MAKE_JOBS_NUMBER_LIMIT</code>. Use 0 to leave the limit unset.</small></label>
+                </div>
+                <h3>Build environment</h3>
+                <div class="settings-grid compact">
+                  <label>FreeBSD jail release<input name="release"></label>
+                  <label>Jail name<input name="jail" required></label>
+                  <label>Ports tree name<input name="ports" required></label>
+                </div>
+              </div>
+            </details>
+            <details name="service-settings" class="settings-tab">
+              <summary>TLS</summary>
+              <div class="settings-body">
+                <h3>Website encryption</h3>
+                <label class="tls-toggle"><input type="checkbox" name="web_tls">Serve the website over HTTPS</label>
+                <p>Turn HTTPS off here if your reverse proxy handles TLS.</p>
+                <h3>Certificate files</h3>
+                <p>Poudrine generates a self-signed certificate by default. To use your own certificate, enter both PEM paths.</p>
+                <div class="settings-grid">
+                  <label>Website certificate file<input name="tls_cert"></label>
+                  <label>Website private key file<input name="tls_key"></label>
+                </div>
+              </div>
+            </details>
+            <details name="service-settings" class="settings-tab">
+              <summary>Storage</summary>
+              <div class="settings-body">
+                <h3>Service account and state</h3>
+                <p>When moving state, stop Poudrine and migrate its signing keys and inventory with their ownership before changing the path.</p>
+                <div class="settings-grid">
+                  <label>Private state directory<input name="state" required></label>
+                  <label>Web service user<input name="service_user" required></label>
+                </div>
+                <h3>Worker paths</h3>
+                <div class="settings-grid">
+                  <label>Poudriere configuration directory<input name="poudriere_config" required></label>
+                  <label>Poudriere base directory<input name="basefs" required></label>
+                  <label>Distfiles cache directory<input name="distfiles" required></label>
+                  <label>Local build signing key<input name="build_key" required></label>
+                  <label>Tracked packages file<input name="packages_file" required></label>
+                  <label>Build status file<input name="build_status" required></label>
+                </div>
+              </div>
+            </details>
+          </div>
+        </fieldset>
+        <div class="settings-footer">
+          <p id="settings-message" role="status" aria-live="polite"></p>
+          <div class="settings-actions">
+            <button type="button" id="settings-reload" hidden>Reload settings</button>
+            <button type="button" id="settings-close">Done</button>
+            <button class="primary" id="settings-save" type="submit" disabled>Save settings</button>
+          </div>
+        </div>
+      </form>
+    </details>
+    <section class="panel inventory" aria-labelledby="packages-title">
+      <h2 id="packages-title">Package inventory</h2>
+      <dl class="inventory-metrics">
+        <div><dt>Tracked origins</dt><dd id="inventory-origin-count">—</dd></div>
+        <div>
+          <dt>Compiled archives</dt><dd id="inventory-compiled-count">—</dd>
+          <dd class="inventory-metric-detail">Archive size <span id="inventory-compiled-size">—</span></dd>
+        </div>
+        <div>
+          <dt>Cached archives</dt><dd id="inventory-cache-count">—</dd>
+          <dd class="inventory-metric-detail">Used <span id="inventory-cache-size">—</span> <span id="inventory-cache-limit"></span></dd>
+        </div>
+        <div>
+          <dt>Poudriere disk usage</dt><dd id="inventory-poudriere-size">—</dd>
+          <dd class="inventory-metric-detail">Base directory and distfiles</dd>
+        </div>
+      </dl>
+      <div class="inventory-controls">
+        <div id="package-filter" class="interval-control" role="group" aria-label="Show packages">
+          <button type="button" data-filter="all" aria-pressed="true">All</button>
+          <button type="button" data-filter="compiled" aria-pressed="false">Compiled</button>
+          <button type="button" data-filter="cached" aria-pressed="false">Cached</button>
+          <button type="button" data-filter="stored" aria-pressed="false">Compiled or cached</button>
+          <button type="button" data-filter="versions_differ" aria-pressed="false">Different from FreeBSD</button>
+        </div>
+        <label class="search"><span class="visually-hidden">Search packages or ports</span><input type="search" id="packages-search" placeholder="Search packages or ports"></label>
+      </div>
+      <p id="packages-note" class="inventory-note"></p>
+      <p id="packages-count" class="count" role="status">Loading packages…</p>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Package inventory">
+        <table class="package-table" aria-labelledby="packages-title">
+          <thead><tr>
+            <th scope="col" aria-sort="ascending"><button type="button" data-sort="origin">Port / package</button></th>
+            <th scope="col">Source</th><th scope="col">Port version</th><th scope="col">Local (FreeBSD)</th>
+            <th scope="col"><button type="button" data-sort="last_seen">Last activity</button></th>
+            <th scope="col" class="numeric"><button type="button" data-sort="build_seconds" title="Elapsed time to build the local package, including pauses">Build time</button></th>
+            <th scope="col" class="numeric"><button type="button" data-sort="size">Size (MB)</button></th>
+            <th scope="col" class="numeric"><button type="button" data-sort="consumers">Consumers</button></th>
+          </tr></thead>
+          <tbody id="packages"></tbody>
+        </table>
+      </div>
+      <div id="packages-pages" class="inventory-pages" hidden>
+        <span id="packages-page"></span>
+        <button type="button" id="packages-previous" aria-label="Previous package page">Previous</button>
+        <button type="button" id="packages-next" aria-label="Next package page">Next</button>
+      </div>
+    </section>
+    <section class="panel inventory" aria-labelledby="clients-title">
+      <div class="panel-heading"><h2 id="clients-title">Repository clients</h2>
+        <label class="search"><span class="visually-hidden">Search client IP addresses</span><input type="search" id="clients-search" placeholder="Search IP addresses"></label>
+      </div>
+      <p id="clients-count" class="count" role="status">Loading clients…</p>
+      <p id="clients-note" class="inventory-note"></p>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Repository clients">
+        <table class="client-table" aria-labelledby="clients-title">
+          <thead><tr><th scope="col">IP address</th><th scope="col" class="numeric">Unique packages</th><th scope="col">Last seen</th><th scope="col"><span class="visually-hidden">Package details</span></th></tr></thead>
+          <tbody id="clients"></tbody>
+        </table>
+      </div>
+      <div id="clients-pages" class="inventory-pages" hidden>
+        <span id="clients-page"></span>
+        <button type="button" id="clients-previous" aria-label="Previous client page">Previous</button>
+        <button type="button" id="clients-next" aria-label="Next client page">Next</button>
+      </div>
+    </section>
+  </div>
+</main>
+<dialog id="client-dialog" aria-labelledby="client-dialog-title" aria-describedby="client-dialog-note">
+  <div class="panel-heading">
+    <div><h2 id="client-dialog-title">Client packages</h2><p id="client-ip"></p></div>
+    <form method="dialog"><button type="submit" autofocus>Close</button></form>
+  </div>
+  <p id="client-dialog-note" class="inventory-note"></p>
+  <button id="client-packages-retry" type="button" hidden>Retry</button>
+  <label class="search"><span class="visually-hidden">Search this client’s packages</span><input type="search" id="client-packages-search" placeholder="Search this client’s packages"></label>
+  <p id="client-packages-count" class="count" role="status"></p>
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Client package details">
+    <table aria-labelledby="client-dialog-title">
+      <thead><tr><th scope="col">Package / port</th><th scope="col">Last requested version</th><th scope="col">Reported installed version</th></tr></thead>
+      <tbody id="client-packages"></tbody>
+    </table>
+  </div>
+  <div id="client-packages-pages" class="inventory-pages" hidden>
+    <span id="client-packages-page"></span>
+    <button type="button" id="client-packages-previous" aria-label="Previous client package page">Previous</button>
+    <button type="button" id="client-packages-next" aria-label="Next client package page">Next</button>
+  </div>
+</dialog>
+<dialog id="package-log-dialog" aria-labelledby="package-log-title" aria-describedby="package-log-info">
+  <div class="panel-heading"><h2 id="package-log-title">Package build log</h2><button type="button" id="close-package-log" autofocus>Close</button></div>
+  <p id="package-log-info"></p>
+  <div class="dialog-log-actions">
+    <button type="button" id="package-log-latest">Refresh latest output</button>
+    <button type="button" id="package-log-earlier" hidden>Load earlier output</button>
+  </div>
+  <p id="package-log-status" role="status"></p>
+  <pre id="package-log-output" tabindex="0" aria-label="Package build log output"></pre>
+</dialog>
+<dialog id="notification-dialog" aria-labelledby="notification-title" aria-describedby="notification-description">
+  <h2 id="notification-title">Build notifications</h2>
+  <p id="notification-description">Receive a notification for each package built locally with a newer version than FreeBSD provides.</p>
+  <p id="push-message" role="status" aria-live="polite"></p>
+  <div class="dialog-actions"><button id="push" class="primary" type="button" disabled>Checking subscription…</button><button type="button" id="close-notifications" autofocus>Done</button></div>
+</dialog>
+</body>
+</html>

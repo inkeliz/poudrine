@@ -1,0 +1,28 @@
+sh <<'POUDRINE_REPORT'
+set -eu
+umask 077
+state=/var/db/poudrine-client
+mkdir -p "$state"
+work=$(mktemp -d "$state/.report.XXXXXXXX")
+trap 'rm -rf "$work"' EXIT
+pkg query -a '%n %v %o' > "$work/packages"
+
+key="$state/inventory.key"
+if [ ! -f "$key" ]; then
+  openssl genpkey -algorithm ED25519 -out "$work/key"
+  ln "$work/key" "$key" || test -f "$key"
+fi
+base64url() { openssl base64 -A | tr '/+' '_-' | tr -d '='; }
+openssl pkey -in "$key" -pubout -outform DER -out "$work/public.der"
+pub=$(tail -c 32 "$work/public.der" | base64url)
+stamp=$(date +%s)
+nonce=$(openssl rand 16 | base64url)
+printf 'poudrine-v2\nPOST\n{{.Path}}\n%s\n%s\n' "$stamp" "$nonce" > "$work/message"
+cat "$work/packages" >> "$work/message"
+openssl pkeyutl -sign -rawin -inkey "$key" -in "$work/message" -out "$work/signature"
+sig=$(base64url < "$work/signature")
+curl -fsS --globoff --data-binary @"$work/packages" -H 'Content-Type: text/plain' \
+  -H "X-Poudrine-Key: $pub" -H "X-Poudrine-Time: $stamp" \
+  -H "X-Poudrine-Nonce: $nonce" -H "X-Poudrine-Signature: $sig" \
+  -- '{{.URL}}'
+POUDRINE_REPORT

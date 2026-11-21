@@ -1,0 +1,26 @@
+# Build and package on FreeBSD with base-system make and tar.
+GO ?= go
+TAR ?= tar
+DESTDIR ?=
+LOCALBASE = /usr/local
+release_files = poudrine poudrine-status rc.d examples/poudrine.json Makefile README.md
+source_files = *.go go.mod go.sum cmd internal web rc.d examples Makefile README.md
+
+.PHONY: all build install dist
+all: build
+
+build:
+	CGO_ENABLED=0 GOOS=freebsd ${GO} build -trimpath -o poudrine ./cmd/poudrine
+	CGO_ENABLED=0 GOOS=freebsd ${GO} build -trimpath -o poudrine-status ./cmd/poudrine-status
+
+# Both a source build and an extracted binary distribution use this target.
+install:
+	test -x poudrine && test -x poudrine-status
+	install -d "${DESTDIR}${LOCALBASE}/sbin" "${DESTDIR}${LOCALBASE}/etc/rc.d"
+	install -S -m 0555 poudrine poudrine-status "${DESTDIR}${LOCALBASE}/sbin/"
+	install -S -m 0555 rc.d/poudrine rc.d/poudrine_status "${DESTDIR}${LOCALBASE}/etc/rc.d/"
+
+dist: build
+	mkdir -p dist
+	${TAR} -czf "dist/poudrine-freebsd-$$(${GO} env GOARCH).tar.gz" -s ',^,poudrine/,' ${release_files}
+	${TAR} -czf dist/poudrine-src.tar.gz -s ',^,poudrine/,' ${source_files}

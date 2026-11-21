@@ -1,0 +1,87 @@
+name: Build and release Poudrine
+
+on:
+  pull_request:
+  push:
+    branches: ['**']
+    tags: ['v[0-9]*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build FreeBSD/amd64
+    if: github.event_name != 'push' || !github.event.deleted
+    runs-on: ubuntu-24.04
+    env:
+      CGO_ENABLED: '0'
+      GOOS: freebsd
+      GOARCH: amd64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+      - name: Install bsdtar
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools
+      - run: go vet ./...
+      - run: make TAR=bsdtar dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: poudrine-freebsd-amd64
+          path: |
+            dist/poudrine-freebsd-amd64.tar.gz
+            dist/poudrine-src.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+          overwrite: true
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: poudrine-freebsd-amd64
+          path: dist
+      - name: Publish binary and source archives
+        working-directory: dist
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          assets=(poudrine-freebsd-amd64.tar.gz poudrine-src.tar.gz)
+          prerelease=false
+          if [[ "${TAG%%+*}" == *-* ]]; then prerelease=true; fi
+
+          if ! draft=$(gh release view "$TAG" --json isDraft --jq '.isDraft'); then
+            gh release create "$TAG" --verify-tag --draft --generate-notes --prerelease="$prerelease"
+            draft=true
+          fi
+          if [[ "$draft" == true ]]; then
+            gh release upload "$TAG" "${assets[@]}" --clobber
+            gh release edit "$TAG" --draft=false --prerelease="$prerelease"
+          else
+            # A rerun can fill missing assets on an existing release.
+            uploaded=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+            for asset in "${assets[@]}"; do
+              if ! grep -Fxq "$asset" <<< "$uploaded"; then
+                gh release upload "$TAG" "$asset"
+              fi
+            done
+          fi

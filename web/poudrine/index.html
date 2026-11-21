@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Client setup · Poudrine</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="poudrine.js" defer></script>
+</head>
+<body class="client-page">
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-head">
+  <div class="bar">
+    <a class="brand" href="./"><span class="brand-mark" aria-hidden="true"></span>Poudrine</a>
+    <nav aria-label="Main"><a href="./" aria-current="page">Client setup</a><a href="admin">Management</a></nav>
+  </div>
+</header>
+<main id="main">
+  <section class="overview" aria-labelledby="title">
+    <div class="overview-art" aria-hidden="true">
+      <div class="parcels">
+        <div class="parcel base"><i></i><b></b><em></em></div>
+        <div class="parcel middle"><i></i><b></b><em></em></div>
+        <div class="parcel top"><i></i><b></b><em></em></div>
+      </div>
+    </div>
+    <div class="overview-copy">
+      <div class="catalog-state" id="catalog-state" data-ready="{{if .Stats.Updated}}yes{{else}}no{{end}}" role="status">
+        <span aria-hidden="true"></span><strong id="catalog-state-label">{{if .Stats.Updated}}Catalog available{{else}}Waiting for catalog{{end}}</strong>
+      </div>
+      <h1 id="title">Package repository</h1>
+      <p>FreeBSD packages and local Poudriere builds in one signed catalog.</p>
+    </div>
+    <div class="metrics">
+      <div class="metric"><span>Available packages</span><strong id="catalog-packages">{{if .Stats.Updated}}{{.Stats.Packages}}{{else}}—{{end}}</strong></div>
+      <div class="metric"><span>Ahead of FreeBSD</span><strong id="catalog-ahead">{{if .Stats.Updated}}{{.Stats.Ahead}}{{else}}—{{end}}</strong></div>
+      <div class="metric publication"><span>Catalog updated</span><time id="catalog-updated"{{with .Stats.Updated}} datetime="{{.Format "2006-01-02T15:04:05Z07:00"}}"{{end}}>{{with .Stats.Updated}}{{.UTC.Format "2 Jan 2006, 15:04 UTC"}}{{else}}Pending{{end}}</time></div>
+    </div>
+    <p id="catalog-error" hidden>Could not refresh catalog status. <button type="button" id="catalog-retry">Retry</button></p>
+  </section>
+
+  <section class="client-setup" aria-labelledby="setup-title">
+    <div class="setup-intro">
+      <h2 id="setup-title">Connect a <span>FreeBSD client</span></h2>
+      <p class="setup-lead">Paste the commands into a root <code>sh</code> shell on the client to use this local repository for ports packages. FreeBSD continues to supply OS updates.</p>
+      <button class="setup-copy" type="button" data-copy="setup-command" hidden><i class="copy-icon" aria-hidden="true"></i>Copy setup commands</button>
+      <details class="command-disclosure">
+        <summary>Review setup commands</summary>
+        <pre tabindex="0" aria-label="Setup commands"><code id="setup-command">{{.SetupCommand}}</code></pre>
+      </details>
+      <noscript><p>Open <strong>Review setup commands</strong> to select and copy the block.</p></noscript>
+      <p class="after-setup">After setup, run <code>pkg update -r Poudrine</code> to refresh the signed catalog.</p>
+    </div>
+
+    <section class="client-files" aria-labelledby="files-title">
+      <div class="files-heading"><h3 id="files-title">Client files</h3><code>/usr/local/etc/pkg/</code></div>
+      <details class="client-file">
+        <summary>
+          <span class="file-icon" aria-hidden="true"></span>
+          <span><small>Repository configuration</small><code>repos/zz-Poudrine.conf</code></span>
+        </summary>
+        <div class="file-content">
+          <p>Enables Poudrine for ports packages and disables <code>FreeBSD-ports</code>. FreeBSD handles OS updates.</p>
+          <pre tabindex="0" aria-label="Repository configuration"><code id="repo-config">{{.RepoConfig}}</code></pre>
+          <button type="button" data-copy="repo-config" hidden><i class="copy-icon" aria-hidden="true"></i>Copy configuration</button>
+        </div>
+      </details>
+      <details class="client-file">
+        <summary>
+          <span class="file-icon" aria-hidden="true"></span>
+          <span><small>Public signing key</small><code>poudrine.pub</code></span>
+        </summary>
+        <div class="file-content">
+          <p>Verify this SHA-256 fingerprint against the public key on your repository host.</p>
+          <code class="key-fingerprint">{{.Fingerprint}}</code>
+          <pre tabindex="0" aria-label="Repository public key"><code id="public-key">{{.PublicKey}}</code></pre>
+          <button type="button" data-copy="public-key" hidden><i class="copy-icon" aria-hidden="true"></i>Copy public key</button>
+        </div>
+      </details>
+      <div class="repo-address">
+        <span>Repository address</span>
+        <div><code id="repo-url">{{.RepositoryURL}}</code><button type="button" class="copy-icon-button" data-copy="repo-url" aria-label="Copy repository address" title="Copy repository address" hidden><i class="copy-icon" aria-hidden="true"></i></button></div>
+      </div>
+    </section>
+  </section>
+
+  <section class="client-report" aria-labelledby="report-title">
+    <h2 id="report-title">Report installed packages</h2>
+    <p>Run this in a root <code>sh</code> shell to report this client’s installed package names, versions and port origins. The administrator can see the full report. Poudrine tracks matching ports without downloading the packages.</p>
+    <p>OpenSSL creates an Ed25519 key on the first run and uses it to sign the report. Keep <code>/var/db/poudrine-client/inventory.key</code> on this client for future reports.</p>
+    <button class="report-copy" type="button" data-copy="report-command" hidden><i class="copy-icon" aria-hidden="true"></i>Copy report command</button>
+    <details class="command-disclosure">
+      <summary>Review report command</summary>
+      <pre tabindex="0" aria-label="Inventory report command"><code id="report-command">{{.ReportCommand}}</code></pre>
+    </details>
+  </section>
+  <p id="copy-feedback" class="copy-feedback" role="status"></p>
+</main>
+</body>
+</html>
