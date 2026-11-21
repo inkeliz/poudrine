@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -27,6 +28,7 @@ type CatalogPackage struct {
 	Path, Name, Origin, BuildOrigin, Version, Sum, ABI string
 	Size                                               int64
 	Local                                              bool
+	live                                               bool
 }
 
 type manifest struct {
@@ -75,7 +77,11 @@ type Catalog struct {
 	key                    *rsa.PrivateKey
 	PublicKey              []byte
 	refresh                sync.Mutex
-	revision               catalogRevision // last successfully published inputs, guarded by refresh
+	publish                sync.Mutex // serializes snapshot changes, independent of upstream HTTP requests
+	revision               catalogRevision
+	upstreamContent        *repoContent // immutable, authenticated input for local-only publications
+	liveDir                string
+	live                   map[string]livePackage
 	localIndex             os.FileInfo
 	localArchives          map[string]os.FileInfo
 	current                atomic.Pointer[catalogSnapshot]
@@ -104,7 +110,7 @@ func NewCatalog(stateDir, upstreamURL, fingerprintsDir, localRepoDir string, cli
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Catalog{upstream: u, fingerprints: fingerprintsDir, localDir: localRepoDir, client: client, key: key, PublicKey: publicKey}, nil
+	return &Catalog{upstream: u, fingerprints: fingerprintsDir, localDir: localRepoDir, liveDir: filepath.Join(stateDir, liveArchiveDirName), client: client, key: key, PublicKey: publicKey}, nil
 }
 
 func (c *Catalog) Package(p string) (CatalogPackage, bool) {
@@ -269,6 +275,26 @@ const repoMeta = "version = 2;\npacking_format = \"tzst\";\nmanifests = \"packag
 func (c *Catalog) Refresh(ctx context.Context) error {
 	c.refresh.Lock()
 	defer c.refresh.Unlock()
+	check, info, err := c.openLocalIndex()
+	if err != nil {
+		return fmt.Errorf("open local Poudriere catalog: %w", err)
+	}
+	if check != nil {
+		check.Close()
+	}
+	var previous catalogRevision
+	c.publish.Lock()
+	if c.revision.archive != "" && c.localInputsUnchanged(info) {
+		previous = c.revision
+	}
+	c.publish.Unlock()
+	repo, revision, err := c.fetchCatalog(ctx, previous)
+	if err != nil {
+		return err
+	}
+	c.publish.Lock()
+	defer c.publish.Unlock()
+	// A bulk may have committed or published more packages during the fetch.
 	index, info, err := c.openLocalIndex()
 	if err != nil {
 		return fmt.Errorf("open local Poudriere catalog: %w", err)
@@ -276,19 +302,21 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 	if index != nil {
 		defer index.Close()
 	}
-	var previous catalogRevision
-	if c.revision.archive != "" && c.localInputsUnchanged(info) {
-		previous = c.revision
-	}
-	repo, revision, err := c.fetchCatalog(ctx, previous)
-	if err != nil {
-		return err
-	}
 	if repo == nil {
-		// Revalidation or an identical verified signature confirmed the snapshot.
-		c.revision = revision
-		return nil
+		if c.localInputsUnchanged(info) {
+			c.revision = revision
+			return nil
+		}
+		repo = c.upstreamContent
 	}
+	return c.publishCatalog(ctx, repo, revision, index, info, c.live)
+}
+
+// publishCatalog builds both signed indexes before making any input or output
+// visible. The caller holds publish. A failed rebuild leaves the last good
+// upstream, local packages and signed snapshot available for retry.
+func (c *Catalog) publishCatalog(ctx context.Context, upstream *repoContent, revision catalogRevision, index *os.File, info os.FileInfo, live map[string]livePackage) error {
+	repo := repoContent{byName: maps.Clone(upstream.byName), extras: upstream.extras}
 	var local repoContent
 	if index != nil {
 		m, err := unpackCatalog(index, "packagesite.yaml")
@@ -313,7 +341,6 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 		compiledFiles: make(map[string]*compiledArchive, len(local.byName)),
 		fetched:       make(map[string]bool),
 		metadata:      make(map[string]metadataFile),
-		updated:       time.Now().UTC(),
 	}
 	arches := map[string]bool{}
 	for _, m := range repo.byName {
@@ -379,11 +406,9 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 		repo.byName[name] = m
 		if exists {
 			s.displaced[name] = old.pkg
-			if versionOrder > 0 {
-				s.ahead++
-			}
 		}
 	}
+	mergeLivePackages(live, repo.byName, arches, s)
 	// Emit the same complete manifests in both pkg formats, including fields
 	// introduced after this software was built.
 	names := make([]string, 0, len(repo.byName))
@@ -408,6 +433,9 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 		}
 		s.byPath[m.pkg.Path] = m.pkg
 		s.pathByName[m.pkg.Name] = m.pkg.Path
+		if original, ok := s.displaced[k]; ok && comparePkgVersions(m.pkg.Version, original.Version) > 0 {
+			s.ahead++
+		}
 		if m.pkg.Name == "pkg" {
 			s.bootstrapPath = m.pkg.Path
 		}
@@ -444,10 +472,30 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if prev := c.current.Load(); prev != nil && s.metadata["data.pkg"].etag == prev.metadata["data.pkg"].etag {
-		s.updated = prev.updated
+	s.updated = time.Now().UTC()
+	if prev := c.current.Load(); prev != nil {
+		if s.metadata["data.pkg"].etag == prev.metadata["data.pkg"].etag {
+			s.updated = prev.updated
+		} else if second := s.updated.Truncate(time.Second); second.Equal(prev.updated.Truncate(time.Second)) {
+			// pkg revalidates by whole-second Last-Modified. A local build
+			// and a regular refresh can both publish within the same second.
+			// Wait for the next timestamp so clients see the second update.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Until(second.Add(time.Second))):
+				s.updated = time.Now().UTC()
+			}
+		}
 	}
-	c.revision, c.localIndex, c.localArchives = revision, info, localFiles
+	if err := checkUpstreamFingerprint(c.fingerprints, revision.fingerprint); err != nil {
+		return err
+	}
+	if err := c.retainLiveDownloads(s); err != nil {
+		return err
+	}
+	c.revision, c.upstreamContent, c.localIndex, c.localArchives = revision, upstream, info, localFiles
+	c.live = maps.Clone(live)
 	c.current.Store(s)
 	return nil
 }

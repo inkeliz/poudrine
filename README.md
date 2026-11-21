@@ -50,7 +50,7 @@ flowchart LR
     build --> publish["Publish the build to<br/>the shared repository"]
 ```
 
-By default, the next scheduled ports update is due 15 minutes after the previous scheduled run finishes. Poudrine also checks FreeBSD’s package catalog every five minutes. If the ports tree gets a newer `curl` first, every VM can pick up the published local build on its next `pkg upgrade`.
+If the ports tree gets a newer `curl` first, Poudrine can publish it while unrelated packages are still building. Once `curl` and its package dependencies are available, every VM can pick it up on its next `pkg upgrade`. By default, the next ports update is due 15 minutes after the previous scheduled run finishes. Poudrine checks FreeBSD’s package catalog every five minutes.
 
 ## Security and network placement
 
@@ -154,7 +154,11 @@ Under **Management → Service settings → Poudriere builds**, set **Working ho
 
 **Repository clients** shows each IP, its unique package count and its last visit. Select **View packages** to see the names, requested versions and versions in the client’s latest installed-package report. A package that appears in both counts once, even when the versions differ. A client that has only requested catalog metadata can have zero packages.
 
-**Package inventory** includes successful builds as soon as they appear in build history. Search by port, package name or full package ID, such as `firefox-161.0,2`. Poudriere publishes its repository at the end of a bulk run. Until the matching archive appears in the catalog, the latest successful build is labeled **Build history only**. Its row shows the completion time and any recorded build duration. Once the archive appears, the same search shows its size.
+During a bulk build, Poudrine checks the worker’s successful packages every 15 seconds. It copies finished archives to its state directory and publishes a signed catalog when a package and its declared dependencies are ready. For example, a client can run `pkg update` and then `pkg install firefox` while other ports are still compiling. If an update would remove a shared library provided by the current version, Poudrine holds that update for Poudriere’s final repository.
+
+At the end of the run Poudrine switches to Poudriere’s committed repository. Budget temporary disk space for one extra copy of the packages published during a build. Poudrine keeps their download URLs for at least 24 hours after the handoff so clients can finish using an earlier catalog. A `local_repo` pointing to a different repository follows that repository’s own publication schedule.
+
+**Package inventory** can be searched by port, package name or full package ID, such as `firefox-161.0,2`. **Build history only** means the build succeeded and the current catalog has no matching compiled archive. You may see it while publication is pending or after a version has been replaced. **Compiled** shows the archive size once the build is available in the inventory.
 
 Use **Compiled** for local builds, **Cached** for downloaded archives, or **Different from FreeBSD** for compiled archives whose version differs from FreeBSD’s. After a successful catalog check, Poudrine removes cached copies when a matching local build has the same or a newer version. A newer FreeBSD download stays cached.
 

@@ -154,6 +154,7 @@ func (o *options) validatePaths() error {
 		}
 	}
 	reserved = append(reserved, settingPath{"state", filepath.Join(o.state, "cache"), true})
+	liveArchives := filepath.Join(o.state, liveArchiveDirName)
 	for _, name := range []string{"inventory.sqlite", "inventory.sqlite-wal", "inventory.sqlite-shm", "inventory.sqlite-journal", "service.lock", "repository.key", "repository.pub", "setup-token", standaloneStatsName} {
 		reserved = append(reserved, settingPath{"state", filepath.Join(o.state, name), false})
 	}
@@ -165,6 +166,9 @@ func (o *options) validatePaths() error {
 
 	paths := append(reserved, all...)
 	for _, p := range paths {
+		if within(p.path, liveArchives) {
+			return fmt.Errorf("%s: %s is reserved for built package archives", p.field, liveArchives)
+		}
 		if within(p.path, publicStatsDir) {
 			return fmt.Errorf("%s: %s is reserved for the public catalog snapshot", p.field, publicStatsDir)
 		}

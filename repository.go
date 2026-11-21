@@ -64,9 +64,27 @@ func (s *repository) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, ok := s.catalog.Package(rel)
+	var f *os.File
 	if !ok {
-		http.NotFound(w, r)
-		return
+		// Only previously advertised immutable URLs survive a catalog change.
+		sum := liveDownloadDigest(rel)
+		if sum == "" {
+			http.NotFound(w, r)
+			return
+		}
+		var err error
+		f, err = s.catalog.openLiveDownload(sum)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer f.Close()
+		m, err := readLiveManifest(f, sum)
+		if err != nil {
+			http.Error(w, "package unavailable", http.StatusBadGateway)
+			return
+		}
+		p = m.pkg
 	}
 	isSignature := bootstrapSignaturePath(rel)
 	size := p.Size
@@ -84,16 +102,23 @@ func (s *repository) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		return
 	}
-	var f *os.File
 	var err error
 	if p.Local {
 		if !filepath.IsLocal(p.Path) {
 			http.Error(w, "invalid local path", 502)
 			return
 		}
-		f, err = os.Open(filepath.Join(s.localDir, filepath.FromSlash(p.Path)))
+		if f == nil {
+			if p.live {
+				f, err = s.catalog.openLiveDownload(liveDownloadDigest(p.Path))
+			} else {
+				f, err = os.Open(filepath.Join(s.localDir, filepath.FromSlash(p.Path)))
+			}
+			if err == nil {
+				defer f.Close()
+			}
+		}
 		if err == nil {
-			defer f.Close()
 			err = verifyPackage(f, io.Discard, p)
 			if err == nil {
 				_, err = f.Seek(0, io.SeekStart)

@@ -232,6 +232,7 @@ func serve(ctx context.Context, o options) error {
 		}
 	})
 	wg.Go(func() { monitor(runCtx, o, cat, cache, publicStats) })
+	wg.Go(func() { monitorLivePackages(runCtx, o, cat) })
 	wg.Go(func() { api.dispatchBuildPush(runCtx, cat) })
 	log.Printf("repository http://%s, website %s://%s, state %s", repoListener.Addr(), webScheme, webListener.Addr(), o.state)
 	if os.Getenv("POUDRINE_SUPERVISED") == "1" {
@@ -261,6 +262,7 @@ func monitor(ctx context.Context, o options, cat *Catalog, cache *packageCache, 
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
 	var next, last time.Time
+	var reported *catalogSnapshot
 	if s, err := ReadBuildStatus(o.builder.StatusFile); err == nil {
 		last = s.Finished
 	}
@@ -269,23 +271,28 @@ func monitor(ctx context.Context, o options, cat *Catalog, cache *packageCache, 
 			last = s.Finished
 			next = time.Time{}
 		}
+		checked := false
 		if !time.Now().Before(next) {
 			if err := cat.Refresh(ctx); err != nil {
 				log.Printf("refresh catalog: %v", err)
 				next = time.Now().Add(min(o.refresh, time.Minute))
 			} else {
-				if err := cache.pruneCompiled(cat.current.Load()); err != nil {
-					log.Printf("prune compiled packages from download cache: %v", err)
-				}
-				stats := cat.Stats()
-				if publicStats != nil {
-					if err := writePublicStats(publicStats, stats); err != nil {
-						log.Printf("write public stats: %v", err)
-					}
-				}
-				log.Printf("catalog checked: %d packages, %d ahead", stats.Packages, stats.Ahead)
+				checked = true
 				next = time.Now().Add(o.refresh)
 			}
+		}
+		if snapshot := cat.current.Load(); snapshot != nil && (checked || snapshot != reported) {
+			reported = snapshot
+			if err := cache.pruneCompiled(snapshot); err != nil {
+				log.Printf("prune compiled packages from download cache: %v", err)
+			}
+			stats := cat.Stats()
+			if publicStats != nil {
+				if err := writePublicStats(publicStats, stats); err != nil {
+					log.Printf("write public stats: %v", err)
+				}
+			}
+			log.Printf("catalog checked: %d packages, %d ahead", stats.Packages, stats.Ahead)
 		}
 		select {
 		case <-ctx.Done():
