@@ -175,6 +175,7 @@ func serve(ctx context.Context, o options) error {
 		return err
 	}
 	cat.jailRoot = o.builder.buildJailRoot()
+	cat.overlays = o.builder.PackageOverlays
 	cache, err := newPackageCache(filepath.Join(o.state, "cache"), int64(o.cacheGB*1e9), up, client)
 	if err != nil {
 		return err

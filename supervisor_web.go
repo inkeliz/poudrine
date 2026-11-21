@@ -104,7 +104,7 @@ type serviceRestartRequest struct {
 	result chan error
 }
 
-func runServiceGenerations(parent context.Context, exe string, o options, cred *syscall.Credential, authority *configAuthority) error {
+func runServiceGenerations(parent context.Context, exe string, o options, cred *syscall.Credential, authority *configAuthority, repoPolicy <-chan PackageOverlays) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	startWeb := func(startup context.Context) (*supervisedWeb, error) {
@@ -221,6 +221,16 @@ func runServiceGenerations(parent context.Context, exe string, o options, cred *
 			return workerErr
 		case req := <-requests:
 			req.result <- restart(req.ctx)
+		case overlays := <-repoPolicy:
+			o.configSettings.PackageOverlays = overlays
+			o.builder.PackageOverlays = overlays
+			if web != nil {
+				web.stop()
+			}
+			web, err = startWeb(ctx)
+			if err != nil && ctx.Err() == nil {
+				log.Printf("apply package overlays to repository: %v; retrying in five seconds", err)
+			}
 		case <-exited:
 			log.Printf("web service exited: %v; restarting it in five seconds", web.err)
 			web.stop()

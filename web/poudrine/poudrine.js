@@ -1308,6 +1308,7 @@ function initManagement() {
 
   const settingsForm = el("settings-form");
   const settingsInputs = Array.from(settingsForm.querySelectorAll("input[name]"));
+  const overlayRows = el("package-overlays");
   const firstSettingsPrompt = "Signed in. Review your network addresses or choose Done to keep the defaults.";
   let savedSettings, settingsRevision, settingsDefaults, settingsBusy = false, settingsConflict = false;
 
@@ -1338,8 +1339,62 @@ function initManagement() {
     return input.type === "checkbox" ? input.checked !== input.defaultChecked : input.value !== input.defaultValue;
   }
 
+  function addOverlayRow(origin = "", overlay = {}) {
+    const row = el("overlay-template").content.firstElementChild.cloneNode(true);
+    row.dataset.savedOrigin = origin;
+    const input = key => row.querySelector('[data-overlay="' + key + '"]');
+    input("origin").defaultValue = origin;
+    input("default_versions").defaultValue = Object.entries(overlay.default_versions || {}).map(([name, version]) => name + "=" + version).join(" ");
+    input("options_set").defaultValue = (overlay.options_set || []).join(" ");
+    input("options_unset").defaultValue = (overlay.options_unset || []).join(" ");
+    row.querySelector("[data-remove-overlay]").onclick = () => {
+      row.remove();
+      el("add-overlay").focus();
+      settingsControls();
+    };
+    overlayRows.append(row);
+    return input("origin");
+  }
+
+  el("add-overlay").onclick = () => {
+    addOverlayRow().focus();
+    settingsControls();
+  };
+
+  function readOverlayRows() {
+    const overlays = Object.create(null);
+    for (const row of overlayRows.children) {
+      const field = key => row.querySelector('[data-overlay="' + key + '"]');
+      const words = key => field(key).value.trim().split(/\s+/).filter(Boolean);
+      const origin = field("origin").value.trim();
+      if (!origin || Object.hasOwn(overlays, origin)) {
+        showSettingError(field("origin"), "Enter a unique port origin, such as databases/mydumper.");
+        return;
+      }
+      const overlay = {};
+      for (const key of ["options_set", "options_unset"]) {
+        const options = words(key);
+        if (options.length) overlay[key] = options;
+      }
+      for (const pair of words("default_versions")) {
+        const [name, version, extra] = pair.split("=");
+        overlay.default_versions ??= Object.create(null);
+        if (!name || !version || extra !== undefined || Object.hasOwn(overlay.default_versions, name)) {
+          showSettingError(field("default_versions"), "Use one name=version entry per dependency, such as mysql=12.3m.");
+          return;
+        }
+        overlay.default_versions[name] = version;
+      }
+      overlays[origin] = overlay;
+    }
+    return overlays;
+  }
+
   function settingsEdited() {
-    return savedSettings && settingsInputs.some(inputEdited);
+    if (!savedSettings) return false;
+    const rows = Array.from(overlayRows.children);
+    return settingsInputs.some(inputEdited) || rows.length !== Object.keys(savedSettings.package_overlays || {}).length ||
+      rows.some(row => !row.dataset.savedOrigin || Array.from(row.querySelectorAll("input")).some(inputEdited));
   }
 
   function settingsControls() {
@@ -1353,6 +1408,8 @@ function initManagement() {
   function fillSettings(values, defaults) {
     savedSettings = values;
     settingsDefaults = defaults;
+    overlayRows.replaceChildren();
+    for (const [origin, overlay] of Object.entries(values.package_overlays || {})) addOverlayRow(origin, overlay);
     for (const input of settingsInputs) {
       const value = values[input.name];
       if (input.type === "checkbox") input.defaultChecked = value;
@@ -1388,6 +1445,10 @@ function initManagement() {
       if (conflict) settingsConflict = true;
       const field = update && error.status === 400 && /^(?:invalid configuration: )?([a-z_]+): (.+)$/s.exec(error.message);
       invalidInput = field && settingsForm.elements.namedItem(field[1]);
+      if (field && field[1] === "package_overlays") {
+        const inputs = Array.from(overlayRows.querySelectorAll('[data-overlay="origin"]'));
+        invalidInput = inputs.find(input => field[2].startsWith(input.value.trim() + ":")) || inputs[0];
+      }
       if (invalidInput) detail = field[2];
       else settingsMessage(saved ? "Settings saved. Reconnect at the configured website address to reload them." :
         conflict ? "Settings changed elsewhere. Reload the latest values before saving." : error.message, true);
@@ -1410,8 +1471,7 @@ function initManagement() {
   el("settings-close").onclick = () => {
     if (settingsEdited()) {
       if (settingsConflict) { syncSettings(); return; }
-      settingsForm.reset();
-      clearSettingError();
+      fillSettings(savedSettings, settingsDefaults);
       settingsMessage("Edits discarded.");
       settingsControls();
     } else {
@@ -1431,7 +1491,9 @@ function initManagement() {
     clearSettingError();
     const invalid = settingsInputs.find(input => !input.validity.valid);
     if (invalid) { showSettingError(invalid, invalid.validationMessage); return; }
-    const settings = {...savedSettings};
+    const overlays = readOverlayRows();
+    if (!overlays) return;
+    const settings = {...savedSettings, package_overlays: overlays};
     // Preserve implicit defaults so URLs, paths and the host release can follow later changes.
     for (const input of settingsInputs.filter(inputEdited)) {
       let value = input.value.trim();

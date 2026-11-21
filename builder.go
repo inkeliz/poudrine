@@ -35,6 +35,7 @@ type BuilderConfig struct {
 	MakeJobsNumber, MakeJobsNumberLimit  int
 	Interval                             time.Duration
 	WorkingHours                         workingHours
+	PackageOverlays                      PackageOverlays
 }
 
 func DefaultBuilderConfig() BuilderConfig {
@@ -124,6 +125,9 @@ var buildRelease = regexp.MustCompile(`^([1-9][0-9]*)\.(0|[1-9][0-9]*)-RELEASE(-
 var buildOrigin = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.+-]*/[A-Za-z0-9][A-Za-z0-9_.+-]*(@[A-Za-z0-9][A-Za-z0-9_.+-]*)?(~[A-Za-z0-9][A-Za-z0-9_.+-]*)?$`)
 
 func (c BuilderConfig) validate() error {
+	if err := c.PackageOverlays.validate(); err != nil {
+		return err
+	}
 	for _, field := range []struct{ name, value string }{{"jail", c.Jail}, {"ports", c.Ports}} {
 		if !buildName.MatchString(field.value) {
 			return fmt.Errorf("%s: start with a letter or digit and use only ASCII letters, digits or underscores", field.name)
@@ -394,6 +398,12 @@ func (b *Builder) configure() error {
 	if (c.MakeJobsNumber > 1 || c.MakeJobsNumberLimit > 1) && c.MakeJobsNumber != 1 && c.MakeJobsNumberLimit != 1 {
 		config += "ALLOW_MAKE_JOBS=yes\n"
 	}
+	if len(c.PackageOverlays) != 0 {
+		// Poudriere's per-jail/-tree overrides are sourced after the main
+		// configuration. A conflicting override must fail the build before
+		// an archive with stock or obsolete options can enter its jail.
+		config += "readonly CHECK_CHANGED_OPTIONS=verbose\n"
+	}
 	config += poudrierePauseClockConfig
 	var makeConf strings.Builder
 	if c.MakeJobsNumber > 0 {
@@ -401,6 +411,10 @@ func (b *Builder) configure() error {
 	}
 	if c.MakeJobsNumberLimit > 0 {
 		fmt.Fprintf(&makeConf, "MAKE_JOBS_NUMBER_LIMIT=%d\n", c.MakeJobsNumberLimit)
+	}
+	makeConf.WriteString(c.PackageOverlays.makeConf())
+	if err := c.configureOverlayTree(); err != nil {
+		return err
 	}
 	if err := writeWorkerConfig(c.makeJobsFile(), makeConf.String()); err != nil {
 		return err
@@ -491,6 +505,19 @@ func (b *Builder) syncOrigins(dbOrigins []string) (string, error) {
 	}
 	if s != old || errors.Is(readErr, fs.ErrNotExist) {
 		err = writeAtomicFile(b.cfg.PackagesFile, []byte(s), 0644)
+	}
+	if err == nil && len(b.cfg.PackageOverlays) != 0 {
+		// A configured overlay is an independent build root. Removing it
+		// should not leave an entry in the administrator's packages file.
+		roots := b.cfg.PackageOverlays.buildOrigins(origins)
+		for i, origin := range roots {
+			if _, ok := b.cfg.PackageOverlays[origin]; ok {
+				roots[i] += "@all"
+			}
+		}
+		slices.Sort(roots)
+		s = strings.Join(slices.Compact(roots), "\n") + "\n"
+		err = writeWorkerConfig(b.cfg.buildListFile(), s)
 	}
 	return s, err
 }
@@ -688,7 +715,7 @@ func (b *Builder) checkBuild(ctx context.Context, schedule *buildSchedule) {
 	schedule.retryMaintenance = maintain && err != nil
 	bulk := err == nil && list != "" && ctx.Err() == nil
 	if bulk {
-		err = b.bulk(ctx, now, b.cfg.PackagesFile, true)
+		err = b.bulk(ctx, now, b.cfg.buildListFile(), true)
 	}
 	finish := time.Now().UTC()
 	next, nextReason := time.Time{}, ""

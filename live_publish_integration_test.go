@@ -66,6 +66,64 @@ func liveFixtureCatalogEntry(manifest, path string, data []byte) []byte {
 	return fmt.Appendf(nil, `%s,"path":%q,"pkgsize":%d,"sum":"%x"}`, strings.TrimSuffix(manifest, "}"), path, len(data), sha256.Sum256(data))
 }
 
+func liveFixtureTrust(t *testing.T) (*rsa.PrivateKey, []byte, string) {
+	t.Helper()
+	upKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&upKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	trust := t.TempDir()
+	putLiveFixture(t, filepath.Join(trust, "trusted", "repo"), fmt.Appendf(nil, "function: \"sha256\"\nfingerprint: \"%x\"\n", sha256.Sum256(pub)))
+	return upKey, pub, trust
+}
+
+// Run pkg with an isolated catalog and cache. Matching the archive bytes also
+// distinguishes two variants with the same name and version.
+func checkPkgFetch(t *testing.T, repoURL, pubKeyPath, pkgName string, archives ...[]byte) {
+	t.Helper()
+	if runtime.GOOS != "freebsd" {
+		t.Skip("requires FreeBSD pkg")
+	}
+	const pkg = "/usr/local/sbin/pkg"
+	if _, err := os.Stat(pkg); err != nil {
+		t.Skip("pkg is not installed")
+	}
+	dir := t.TempDir()
+	conf := filepath.Join(dir, "pkg.conf")
+	putLiveFixture(t, conf, fmt.Appendf(nil, "REPOS_DIR: [%q]\nPKG_DBDIR: %q\nPKG_CACHEDIR: %q\nABI: FreeBSD:15:amd64\n", filepath.Join(dir, "repos"), filepath.Join(dir, "db"), filepath.Join(dir, "cache")))
+	putLiveFixture(t, filepath.Join(dir, "repos", "Poudrine.conf"), fmt.Appendf(nil, "Poudrine: { url: %q, signature_type: pubkey, pubkey: %q }\n", repoURL, pubKeyPath))
+	cmd := exec.CommandContext(t.Context(), pkg, "-o", "INSTALL_AS_USER=yes", "-C", conf, "install", "--fetch-only", "-y", "-r", "Poudrine", pkgName)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("pkg install --fetch-only: %v\n%s", err, out)
+	}
+	found := make([]bool, len(archives))
+	err := filepath.WalkDir(filepath.Join(dir, "cache"), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || !entry.Type().IsRegular() || filepath.Ext(path) != ".pkg" {
+			return err
+		}
+		body, err := os.ReadFile(path)
+		for i, archive := range archives {
+			if bytes.Equal(archive, body) {
+				found[i] = true
+			}
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, ok := range found {
+		if !ok {
+			t.Errorf("pkg install --fetch-only %s did not fetch archive %d", pkgName, i+1)
+		}
+	}
+}
+
 func TestLivePackageInstallBeforeBulkCommit(t *testing.T) {
 	for _, source := range []string{"upstream", "built", "fetched"} {
 		t.Run(source, func(t *testing.T) { testLivePackageInstall(t, source) })
@@ -102,17 +160,7 @@ func testLivePackageInstall(t *testing.T, dependencySource string) {
 	putLiveFixture(t, filepath.Join(logDir, ".poudriere.ports.built"), []byte(built+"devel/unfinished unfinished-1 2"))
 	putLiveFixture(t, filepath.Join(logDir, ".poudriere.ports.failed"), []byte("devel/failed failed-1 build error 5\n"))
 
-	upKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	der, err := x509.MarshalPKIXPublicKey(&upKey.PublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pub := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
-	trust := t.TempDir()
-	putLiveFixture(t, filepath.Join(trust, "trusted", "repo"), fmt.Appendf(nil, "function: \"sha256\"\nfingerprint: \"%x\"\n", sha256.Sum256(pub)))
+	upKey, pub, trust := liveFixtureTrust(t)
 	const dav1dPath = "All/dav1d-1.5.4_1.pkg"
 	dav1dManifest := strings.TrimSuffix(liveFixtureOriginManifest("dav1d", "multimedia/dav1d", "1.5.4_1"), "}") + `,"shlibs_provided":["libdav1d.so.7"]}`
 	dav1dArchive := liveFixtureArchive(t, dav1dManifest)
@@ -293,34 +341,7 @@ func testLivePackageInstall(t *testing.T, dependencySource string) {
 		t.Fatal("live package contents differ")
 	}
 	t.Run("FreeBSD pkg install", func(t *testing.T) {
-		if runtime.GOOS != "freebsd" {
-			t.Skip("requires FreeBSD pkg")
-		}
-		const pkg = "/usr/local/sbin/pkg"
-		if _, err := os.Stat(pkg); err != nil {
-			t.Skip("pkg is not installed")
-		}
-		dir := t.TempDir()
-		conf := filepath.Join(dir, "pkg.conf")
-		putLiveFixture(t, conf, fmt.Appendf(nil, "REPOS_DIR: [%q]\nPKG_DBDIR: %q\nPKG_CACHEDIR: %q\nABI: FreeBSD:15:amd64\n", filepath.Join(dir, "repos"), filepath.Join(dir, "db"), filepath.Join(dir, "cache")))
-		putLiveFixture(t, filepath.Join(dir, "repos", "Poudrine.conf"), fmt.Appendf(nil, "Poudrine: { url: %q, signature_type: pubkey, pubkey: %q }\n", clientRepo.URL, filepath.Join(state, "repository.pub")))
-		cmd := exec.CommandContext(t.Context(), pkg, "-o", "INSTALL_AS_USER=yes", "-C", conf, "install", "--fetch-only", "-y", "-r", "Poudrine", name)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("pkg install --fetch-only: %v\n%s", err, out)
-		}
-		var foundFirefox, foundDav1d bool
-		err := filepath.WalkDir(filepath.Join(dir, "cache"), func(path string, entry fs.DirEntry, err error) error {
-			if err != nil || !entry.Type().IsRegular() || filepath.Ext(path) != ".pkg" {
-				return err
-			}
-			body, err := os.ReadFile(path)
-			foundFirefox = foundFirefox || bytes.Equal(body, archive)
-			foundDav1d = foundDav1d || bytes.Equal(body, wantDav1d)
-			return err
-		})
-		if err != nil || !foundFirefox || !foundDav1d {
-			t.Fatalf("pkg install --fetch-only cache: Firefox %t, dav1d %t, error %v", foundFirefox, foundDav1d, err)
-		}
+		checkPkgFetch(t, clientRepo.URL, filepath.Join(state, "repository.pub"), name, archive, wantDav1d)
 	})
 	before = upstreamRequests.Load()
 

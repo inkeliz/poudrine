@@ -118,6 +118,9 @@ func (s *catalogSnapshot) supersedes(p CatalogPackage) bool {
 	if s == nil {
 		return false
 	}
+	if _, overlaid := s.overlays[basePort(p.Origin)]; overlaid {
+		return true
+	}
 	local, ok := s.compiled[p.Name]
 	if !ok || p.Version == "" || local.Origin != p.Origin || local.BuildOrigin != p.BuildOrigin ||
 		!compatibleABI(local.ABI, p.ABI) || comparePkgVersions(local.Version, p.Version) < 0 {
@@ -129,7 +132,7 @@ func (s *catalogSnapshot) supersedes(p CatalogPackage) bool {
 
 func (c *packageCache) pruneCompiled(s *catalogSnapshot) error {
 	c.catalog.Store(s)
-	if len(s.compiled) == 0 {
+	if len(s.compiled) == 0 && len(s.overlays) == 0 {
 		return nil
 	}
 	var errs error

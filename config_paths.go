@@ -56,6 +56,11 @@ func (c BuilderConfig) workerPaths() []settingPath {
 		{"poudriere_config", filepath.Join(c.ConfigDir, ".poudrine-pauses"), false},
 		{"poudriere_config", filepath.Join(c.ConfigDir, "poudriere.conf"), false},
 		{"poudriere_config", c.makeJobsFile(), false},
+		{"poudriere_config", filepath.Join(c.ConfigDir, ".poudrine-build-origins"), false},
+		{"package_overlays", c.overlayDir(), true},
+		{"package_overlays", filepath.Join(c.overlayDir(), "Makefile"), false},
+		{"package_overlays", filepath.Join(c.overlayDir(), "Mk", "bsd.overlay.mk"), false},
+		{"poudriere_config", filepath.Join(c.ConfigDir, "poudriere.d", "ports", overlayTreeName, "mnt"), false},
 		{"basefs", c.RepositoryDir(), true},
 		{"build_key", c.SigningKey, false},
 		{"packages_file", c.PackagesFile, false},
@@ -63,15 +68,21 @@ func (c BuilderConfig) workerPaths() []settingPath {
 	}
 }
 
-// Distinct directory settings may be nested. A file must not also serve as a
-// directory or be overwritten by another managed file.
+// The generated overlay tree is mounted into jails. Keep every other
+// setting, including the signing and TLS keys, outside that tree.
+func (p settingPath) conflictsWithChild(other settingPath) bool {
+	return (!p.directory || p.field == "package_overlays" && other.field != p.field) && within(other.path, p.path)
+}
+
+// Distinct directory settings may normally be nested. A file must not
+// also serve as a directory or be overwritten by another managed file.
 func validatePathLayout(paths []settingPath) error {
 	for i, p := range paths {
 		if err := p.checkLength(); err != nil {
 			return err
 		}
 		for _, other := range paths[:i] {
-			if (!other.directory && within(p.path, other.path)) || (!p.directory && within(other.path, p.path)) {
+			if p.conflictsWithChild(other) || other.conflictsWithChild(p) {
 				return fmt.Errorf("%s: path %q conflicts with %s at %q", p.field, p.path, other.field, other.path)
 			}
 		}

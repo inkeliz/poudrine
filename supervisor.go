@@ -172,7 +172,7 @@ func childProcess(ctx context.Context, exe string, cred *syscall.Credential, arg
 	return cmd
 }
 
-func supervise(ctx context.Context, mode string, o options, registered chan<- *Builder, restore *workerCheckpoint) error {
+func supervise(ctx context.Context, mode string, o options, registered chan<- *Builder, restore *workerCheckpoint, repoPolicy <-chan PackageOverlays) error {
 	if runtime.GOOS != "freebsd" || os.Geteuid() != 0 {
 		return errors.New("Poudriere setup requires root on FreeBSD. Run doas poudrine, or use poudrine serve for the HTTP services alone")
 	}
@@ -271,5 +271,5 @@ func supervise(ctx context.Context, mode string, o options, registered chan<- *B
 		return err
 	}
 	authority.builder = b
-	return runServiceGenerations(ctx, exe, o, cred, authority)
+	return runServiceGenerations(ctx, exe, o, cred, authority, repoPolicy)
 }

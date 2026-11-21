@@ -85,6 +85,20 @@ func (s *repository) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p = m.pkg
+		// A retained URL can outlive a configuration change or service
+		// restart. Its archive carries the settings used for that build.
+		snapshot := s.catalog.current.Load()
+		if snapshot == nil && len(s.catalog.overlays) > 0 {
+			// Until the current catalog resolves names to origins, we cannot
+			// distinguish a port move from a different provider of an overlay.
+			http.Error(w, "repository catalog is initializing", http.StatusServiceUnavailable)
+			return
+		}
+		verifiedOverlayBuild := strings.HasPrefix(filepath.Base(f.Name()), liveOverlayPrefix)
+		if !snapshot.permitsLocal(p, !verifiedOverlayBuild) {
+			http.NotFound(w, r)
+			return
+		}
 	}
 	isSignature := bootstrapSignaturePath(rel)
 	size := p.Size

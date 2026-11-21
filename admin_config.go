@@ -63,14 +63,14 @@ func (a *Admin) configuration(w http.ResponseWriter, r *http.Request, body []byt
 		var revision string
 		var err error
 		serverTime := time.Now().Format("15:04 MST")
-		var hoursPending bool
+		var workerPending bool
 		if a.cfg.broker != nil {
 			reply, err := a.cfg.broker.read(r, body)
 			if err != nil {
 				http.Error(w, err.Error(), reply.Status)
 				return
 			}
-			cfg, revision, hoursPending, serverTime = *reply.Settings, reply.Revision, reply.HoursPending, reply.ServerTime
+			cfg, revision, workerPending, serverTime = *reply.Settings, reply.Revision, reply.WorkerPending, reply.ServerTime
 		} else {
 			cfg, revision, err = loadConfiguration(a.cfg.ConfigPath)
 			if err != nil {
@@ -93,7 +93,7 @@ func (a *Admin) configuration(w http.ResponseWriter, r *http.Request, body []byt
 			Revision   string            `json:"revision"`
 			Active     bool              `json:"active"`
 			ServerTime string            `json:"server_time"`
-		}{cfg, defaults, revision, cfg.sameGeneration(a.cfg.ActiveSettings) && !hoursPending, serverTime})
+		}{cfg, defaults, revision, cfg.sameGeneration(a.cfg.ActiveSettings) && !workerPending, serverTime})
 		return
 	}
 	var revision string

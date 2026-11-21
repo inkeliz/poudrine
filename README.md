@@ -130,6 +130,48 @@ On the Poudrine website, open **Client setup** and select **Copy setup commands*
 
 ## Operate the service
 
+### Build a package with your own options
+
+A package overlay tells Poudriere to build a specific port for your VMs, even before a client asks for it. Poudrine offers only local builds made with those settings, including when FreeBSD has a newer version. Until the first matching build is ready, the package stays unavailable, even if Poudrine already cached the stock archive. After that, clients can keep using the matching build while an update compiles or if an update fails.
+
+**Example — build mydumper with MariaDB 12.3**
+
+1. Open **Management → Service settings → Poudriere builds → Package overlays** and choose **Add port**.
+2. Enter `databases/mydumper` for **Port origin** and `mysql=12.3m` for **Default versions**. For a host running `mariadb123-server-12.3.3`, this selects the `mariadb123-client` library used by mydumper. The selector follows the 12.3 series across patch updates. [FreeBSD mydumper port](https://github.com/freebsd/freebsd-ports/blob/main/databases/mydumper/Makefile) · [Supported MySQL and MariaDB versions](https://github.com/freebsd/freebsd-ports/blob/main/Mk/Uses/mysql.mk)
+3. Save settings. The worker builds the port in its next allowed build window. **Run build now** requests an earlier run within working hours. A build already in progress can finish while the repository starts enforcing the new overlay.
+
+You can also add the overlay directly to your existing `/usr/local/etc/poudrine.json`.
+
+```json
+{
+  "package_overlays": {
+    "databases/mydumper": {
+      "default_versions": { "mysql": "12.3m" }
+    }
+  }
+}
+```
+
+On a VM with a locked local copy, keep the lock while the build runs. Refresh the catalog and check the dependency that clients will actually install.
+
+```sh
+pkg update -f -r Poudrine
+pkg rquery -r Poudrine '%dn-%dv' mydumper
+```
+
+Once the output lists `mariadb123-client`, switch the VM to the Poudrine build. The forced install handles an existing package at the same version.
+
+```sh
+pkg unlock mydumper
+pkg install -f -r Poudrine mydumper
+```
+
+Leave it unlocked to receive future builds through `pkg upgrade`.
+
+For other ports, use `options_set` and `options_unset` arrays for named port options, and `default_versions` for dependency selectors supported by that port. For example, `"options_unset": ["DOCS"]` disables documentation on a port that offers the `DOCS` option. An empty object such as `"www/nginx": {}` requests a local build with the port’s normal settings.
+
+Each overlay covers one port origin, including its flavors and subpackages. Changing its settings requires a matching build even at the same package version. Removing the entry restores normal repository selection for that origin.
+
 ### Builds and inventory
 
 Poudrine checks the FreeBSD metadata every five minutes by default. When the mirror supports conditional HTTP requests, an unchanged signed catalog can be revalidated without downloading the archive again. Changed metadata still requires signature verification before publication. If a check fails, Poudrine retries within a minute.
@@ -191,6 +233,7 @@ Management shows the number and size of compiled archives and cached downloads. 
 | `cache_gb`, `refresh` | 5 GB of download cache, five minutes between FreeBSD catalog checks. Completing a build triggers an additional check. To update an installation with an explicit hourly interval, set `refresh` to `"5m"` or change **Catalog refresh interval** in Management. |
 | `jail`, `ports`, `jobs`, `build_interval` | `latest`, `main`, six parallel jobs, 15 minutes between scheduled runs. If your configuration already specifies a longer interval, set **Poudriere builds → Build interval** to `15m` in Service settings. |
 | `working_hours` | Daily working hours, for example `"22:00-06:00,11:00-17:00"`. Defaults to unrestricted. |
+| `package_overlays` | Per-port build settings. Defaults to an empty object. See [Build a package with your own options](#build-a-package-with-your-own-options). |
 | `make_jobs_number`, `make_jobs_number_limit` | Per-package make job count and cap. Each defaults to `0`, which leaves that override unset. A count or cap above one enables parallel make when the other setting permits it. |
 | `local_repo`, `packages_file` | Poudriere’s published package directory and `/usr/local/etc/poudriere.d/packages.txt`. |
 
@@ -243,6 +286,8 @@ To publish just the package count and the number ahead of FreeBSD, run `sysrc po
 Run `CGO_ENABLED=0 go test ./...` and `make build` beside `go.mod`. The two commands live in `cmd/poudrine` and `cmd/poudrine-status`. Each embeds its own files from the corresponding directory under `web/`. Run `make dist` to create binary and source archives in `dist/`.
 
 Push a tag such as `v1.2.3` to publish the FreeBSD/amd64 binary archive and the source archive. A tag such as `v1.2.3-rc.1` publishes a prerelease. Branch pushes and pull requests also build both archives. [GitHub Releases](https://github.com/inkeliz/poudrine/releases)
+
+On FreeBSD, set `POUDRINE_TEST_PORTSDIR=/usr/ports` when running the tests to check the generated overlay against a local ports checkout. The test resolves mydumper’s MariaDB dependency using the ports framework.
 
 To exercise the HTTP services alone, save the following in `dev.json` and run `./poudrine serve -config ./dev.json` as an ordinary user.
 

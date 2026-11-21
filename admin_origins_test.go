@@ -100,3 +100,46 @@ func TestConfiguredOriginsRequiresRegularFile(t *testing.T) {
 		t.Fatalf("configured symlink: %v", origins)
 	}
 }
+
+func TestOverlayVisibleBeforeFirstBuild(t *testing.T) {
+	for _, mode := range []string{"standalone", "supervised"} {
+		t.Run(mode, func(t *testing.T) {
+			a := testAdmin(t)
+			key := enrollAdmin(t, a)
+			const origin = "databases/mydumper"
+			cfg := workerTestConfig(t.TempDir())
+			cfg.PackageOverlays = PackageOverlays{origin: {}}
+			if mode == "standalone" {
+				a.cfg.ActiveSettings.PackagesFile = cfg.PackagesFile
+				a.cfg.ActiveSettings.PackageOverlays = cfg.PackageOverlays
+			} else {
+				b, err := NewBuilder(cfg, func(context.Context) ([]string, error) { return nil, nil }, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				a, _ = supervisedTestAdmin(t, a.cfg, key, b)
+			}
+			a.cfg.Packages = func(_ context.Context, origins []string) (packageInventoryView, error) {
+				return managementPackages(nil, nil, origins, nil, nil, nil), nil
+			}
+			get := func(path string, dst any) {
+				t.Helper()
+				req := signedTestRequest(t, key, methodQuery, path, []byte("{}"), time.Now())
+				reply := adminResponse(t, a, req, 200)
+				if err := json.Unmarshal(reply.Body.Bytes(), dst); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var roots struct{ Origins []string }
+			get(originsPath, &roots)
+			if !reflect.DeepEqual(roots.Origins, []string{origin}) {
+				t.Fatalf("missing overlay origin: %v", roots.Origins)
+			}
+			var view packageInventoryView
+			get(packagesPath, &view)
+			if view.TrackedOrigins != 1 || len(view.Packages) != 1 || !view.Packages[0].Tracked || view.Packages[0].Origin != origin {
+				t.Fatalf("missing overlay in inventory: %+v", view)
+			}
+		})
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"reflect"
 	"time"
 )
 
@@ -34,7 +35,7 @@ func reloadCandidate(ctx context.Context, mode string, current options) (options
 	if err != nil {
 		return options{}, err
 	}
-	if current.configRevision == revision || cfg == current.configSettings {
+	if current.configRevision == revision || reflect.DeepEqual(cfg, current.configSettings) {
 		current.configRevision = revision
 		return current, nil
 	}
@@ -49,11 +50,13 @@ func reloadCandidate(ctx context.Context, mode string, current options) (options
 	return updated, preflightConfiguration(ctx, mode, updated)
 }
 
-// Working hours are applied directly to an active worker. Other settings
-// restart the HTTP child and worker together so paths and credentials agree.
+// Working hours are applied directly to an active worker. Overlay builds
+// require a new worker generation, even when HTTP already enforces the policy.
 func (c Configuration) sameGeneration(other Configuration) bool {
 	c.WorkingHours = other.WorkingHours
-	return c == other
+	overlays := c.PackageOverlays
+	c.PackageOverlays = other.PackageOverlays
+	return reflect.DeepEqual(c, other) && overlays.equal(other.PackageOverlays)
 }
 
 type configTransition struct {
@@ -61,7 +64,7 @@ type configTransition struct {
 	next    *options
 }
 
-func watchConfiguration(ctx context.Context, mode string, current options, registered <-chan *Builder, ticks <-chan time.Time) configTransition {
+func watchConfiguration(ctx context.Context, mode string, current options, registered <-chan *Builder, ticks <-chan time.Time, repoPolicy chan<- PackageOverlays) configTransition {
 	var lastError string
 	var worker *Builder
 	checked := current
@@ -81,6 +84,7 @@ func watchConfiguration(ctx context.Context, mode string, current options, regis
 				continue
 			}
 			lastError = ""
+			previousPolicy := checked.builder.PackageOverlays
 			checked = updated
 			if worker != nil {
 				worker.SetWorkingHours(updated.builder.WorkingHours)
@@ -88,12 +92,21 @@ func watchConfiguration(ctx context.Context, mode string, current options, regis
 			if !updated.configSettings.sameGeneration(current.configSettings) {
 				// A manual edit may arrive just before the rc restart request.
 				// Reserve an idle boundary before cancelling this generation.
-				if mode == "run" && worker != nil && !worker.reserveConfigChange() {
-					continue
+				if mode != "run" || worker == nil || worker.reserveConfigChange() {
+					return configTransition{current: current, next: &updated}
 				}
-				return configTransition{current: current, next: &updated}
+			} else {
+				current = updated
 			}
-			current = updated
+			// An active build keeps its make settings. The repository must
+			// enforce the new policy even if that build takes hours to finish.
+			if repoPolicy != nil && !previousPolicy.equal(updated.builder.PackageOverlays) {
+				select {
+				case repoPolicy <- updated.builder.PackageOverlays:
+				case <-ctx.Done():
+					return configTransition{current: current}
+				}
+			}
 		}
 	}
 }
@@ -111,18 +124,19 @@ func runConfigured(ctx context.Context, mode string, initial options) error {
 	for ctx.Err() == nil {
 		generation, stop := context.WithCancel(ctx)
 		registered := make(chan *Builder, 1)
+		repoPolicy := make(chan PackageOverlays)
 		done := make(chan configTransition, 1)
 		go func(current options) {
 			t := time.NewTicker(2 * time.Second)
 			defer t.Stop()
-			done <- watchConfiguration(generation, mode, current, registered, t.C)
+			done <- watchConfiguration(generation, mode, current, registered, t.C, repoPolicy)
 			stop()
 		}(active)
 		var err error
 		if mode == "serve" {
 			err = serve(generation, active)
 		} else {
-			err = supervise(generation, mode, active, registered, restore)
+			err = supervise(generation, mode, active, registered, restore, repoPolicy)
 			restore = nil
 		}
 		stop()
@@ -145,9 +159,17 @@ func runConfigured(ctx context.Context, mode string, initial options) error {
 			continue
 		}
 		if err != nil && fallback != nil {
-			log.Printf("could not run new settings: %v; restoring previous running settings until the file is corrected", err)
-			fallback.configRevision = change.current.configRevision
-			active = *fallback
+			log.Printf("could not run new settings: %v; restoring previous running settings with the current package overlays", err)
+			// A failure applying a listener or TLS change must not expose
+			// stock packages that the administrator has just restricted.
+			cfg := fallback.configSettings
+			cfg.PackageOverlays = active.builder.PackageOverlays
+			restored, restoreErr := cfg.options(fallback.configPath)
+			if restoreErr != nil {
+				return errors.Join(err, restoreErr)
+			}
+			restored.configRevision = change.current.configRevision
+			active = restored
 			fallback = nil
 			continue
 		}

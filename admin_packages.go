@@ -74,6 +74,7 @@ func (a *Admin) packageInventory(w http.ResponseWriter, r *http.Request, body []
 			poudriereBytes = reply.PoudriereBytes
 		}
 	}
+	origins = a.cfg.ActiveSettings.PackageOverlays.buildOrigins(origins)
 	view, err := a.cfg.Packages(r.Context(), origins)
 	if err != nil {
 		adminInternal(w, err)

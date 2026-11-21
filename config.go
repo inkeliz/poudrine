@@ -61,6 +61,8 @@ type Configuration struct {
 	MakeJobsNumberLimit int     `json:"make_jobs_number_limit"`
 	BuildInterval       string  `json:"build_interval"`
 	WorkingHours        string  `json:"working_hours"`
+
+	PackageOverlays PackageOverlays `json:"package_overlays"`
 }
 
 func defaultConfiguration() Configuration {
@@ -85,6 +87,7 @@ func defaultConfiguration() Configuration {
 		BuildStatus:     b.StatusFile,
 		Jobs:            b.Jobs,
 		BuildInterval:   b.Interval.String(),
+		PackageOverlays: PackageOverlays{},
 	}
 }
 
@@ -163,6 +166,7 @@ func (c Configuration) options(path string) (options, error) {
 		MakeJobsNumberLimit: c.MakeJobsNumberLimit,
 		Interval:            interval,
 		WorkingHours:        hours,
+		PackageOverlays:     c.PackageOverlays,
 	}
 	if err := o.builder.validate(); err != nil {
 		return o, err
@@ -249,6 +253,11 @@ func decodeConfiguration(raw []byte, path string) (Configuration, error) {
 	}
 	if _, err := c.options(path); err != nil {
 		return c, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
+	}
+	// The supervisor sends a complete configuration to the HTTP child. A
+	// compact manual file must still fit after omitted defaults are expanded.
+	if snapshot, err := json.Marshal(c); err != nil || len(snapshot) > maxConfigBytes {
+		return c, fmt.Errorf("%w: expanded configuration exceeds %d bytes", ErrInvalidConfig, maxConfigBytes)
 	}
 	return c, nil
 }

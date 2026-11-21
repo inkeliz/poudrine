@@ -208,6 +208,9 @@ func mergeLivePackages(live map[string]livePackage, selected map[string]manifest
 		case name != p.Name || !p.Local || candidate.file == nil:
 			hold(name, "The captured archive does not match the local build.")
 			continue
+		case !s.permitsLocal(p, candidate.fetched):
+			hold(name, "Waiting for a local build with the current package settings.")
+			continue
 		case !arches[p.ABI]:
 			hold(name, fmt.Sprintf("The repository does not contain packages for %s.", p.ABI))
 			continue

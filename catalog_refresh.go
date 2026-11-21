@@ -3,6 +3,7 @@ package poudrine
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -67,6 +68,25 @@ func (a *compiledArchive) verify(p CatalogPackage) error {
 		return errUntrustedPackage
 	}
 	if !a.verified {
+		if p.overlayDigest != "" {
+			// A native repository index can outlive or mislabel the archive.
+			// Check the provenance that was written into the package itself.
+			raw, err := liveCompactJSON(f)
+			if err != nil {
+				return err
+			}
+			var built struct {
+				Name, Origin, Version string
+				Annotations           packageAnnotations
+			}
+			if err := json.Unmarshal(raw, &built); err != nil {
+				return err
+			}
+			if built.Annotations.OverlayDigest != p.overlayDigest || built.Name != p.Name || built.Version != p.Version ||
+				packageBuildOrigin(built.Origin, built.Annotations.Flavor, built.Annotations.Subpackage) != p.BuildOrigin {
+				return errUntrustedPackage
+			}
+		}
 		if err := verifyPackage(f, io.Discard, p); err != nil {
 			return err
 		}

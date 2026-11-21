@@ -39,6 +39,13 @@ type BuildJob struct {
 const buildNameFormat = "2006-01-02_15h04m05s.000000000"
 
 func (b *Builder) bulk(ctx context.Context, started time.Time, packagesFile string, fetchPackages bool) error {
+	args := []string{"bulk", "-j", b.cfg.Jail, "-p", b.cfg.Ports}
+	if len(b.cfg.PackageOverlays) != 0 {
+		if err := b.registerOverlay(ctx); err != nil {
+			return err
+		}
+		args = append(args, "-O", overlayTreeName)
+	}
 	// Pin the log directory to this invocation. "latest" can still point at
 	// the previous build during setup, or change when another build starts.
 	name := started.UTC().Format(buildNameFormat)
@@ -60,7 +67,6 @@ func (b *Builder) bulk(ctx context.Context, started time.Time, packagesFile stri
 			}
 		}
 	}()
-	args := []string{"bulk", "-j", b.cfg.Jail, "-p", b.cfg.Ports}
 	if fetchPackages {
 		args = append(args, "-b", "latest")
 	}

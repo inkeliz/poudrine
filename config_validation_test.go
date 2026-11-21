@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -95,7 +96,9 @@ func TestWebRejectsInvalidConfigBeforeWriting(t *testing.T) {
 			if err := os.WriteFile(path, prior, 0600); err != nil {
 				t.Fatal(err)
 			}
-			for _, raw := range []string{`{"jobs":4,"jobs":5}`, `{"web_tls":null}`, `{"refresh":"tomorrow"}`, `{"tls_cert":"missing","tls_key":"key"}`} {
+			for _, raw := range []string{`{"jobs":4,"jobs":5}`, `{"web_tls":null}`, `{"refresh":"tomorrow"}`, `{"tls_cert":"missing","tls_key":"key"}`,
+				`{"package_overlays":{"devel/test":{"options_set":["DOCS\nEXTRA"]}}}`,
+				`{"package_overlays":{"devel/test":{"default_versions":{"mysql":"8","mysql":"10.11m"}}}}`} {
 				b, err := json.Marshal(configUpdate{Settings: json.RawMessage(raw), Revision: configRevision(prior)})
 				if err != nil {
 					t.Fatal(err)
@@ -150,7 +153,7 @@ func TestWebSettingsPrefillPreservesAutomaticConfiguration(t *testing.T) {
 		}
 	}
 	raw, _, err := loadConfiguration(a.cfg.ConfigPath)
-	if err != nil || raw != out.Settings || raw.RepoURL != "" || raw.TLSCert != "" || raw.WorkingHours != "" || raw.CacheGB != 0 {
+	if err != nil || !reflect.DeepEqual(raw, out.Settings) || raw.RepoURL != "" || raw.TLSCert != "" || raw.WorkingHours != "" || raw.CacheGB != 0 {
 		t.Fatalf("configuration and automatic defaults diverged: %+v, %v", out.Settings, err)
 	}
 }

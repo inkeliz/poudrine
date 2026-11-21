@@ -2,6 +2,7 @@ package poudrine
 
 import (
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -81,7 +82,7 @@ func TestNetworkConfigurationNormalizesAddresses(t *testing.T) {
 	if o.repoListen != "[::]:80" || o.webListen != "[fe80::1%em0]:8181" || o.publicURL != "https://xn--bcher-kva.example:444/FreeBSD:15:amd64/latest" || o.websiteURL != c.WebURL || o.upstream != "https://xn--bcher-kva.example./packages" || o.pushContact != "admin+pkg@xn--bcher-kva.example" {
 		t.Errorf("unexpected addresses: %q, %q, %q, %q, %q, %q", o.repoListen, o.webListen, o.publicURL, o.websiteURL, o.upstream, o.pushContact)
 	}
-	if o.configSettings != c {
+	if !reflect.DeepEqual(o.configSettings, c) {
 		t.Fatal("runtime normalization changed the editable settings")
 	}
 	for _, contact := range []string{"admin@localhost", "https://contact.example/support?id=4", "admin@[192.0.2.1]", "admin@[IPv6:2001:db8::1]"} {

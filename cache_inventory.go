@@ -75,11 +75,7 @@ func (c *packageCache) inventory(s *catalogSnapshot) []cachedArchive {
 	if s != nil && len(unknown) != 0 {
 		// An older or unreadable manifest can still be identified by the
 		// signed upstream checksum, even if a newer local build is served.
-		for name := range s.pathByName {
-			p, ok := s.freeBSDPackage(name)
-			if !ok {
-				continue
-			}
+		identify := func(p CatalogPackage) {
 			key := packageCacheKey(p.Sum)
 			if i, exists := unknown[key]; exists && entries[i].Package.Size == p.Size {
 				entries[i].Package = p
@@ -90,9 +86,20 @@ func (c *packageCache) inventory(s *catalogSnapshot) []cachedArchive {
 				}
 				c.mu.Unlock()
 				delete(unknown, key)
-				if len(unknown) == 0 {
-					break
-				}
+			}
+		}
+		for _, p := range s.displaced {
+			identify(p)
+			if len(unknown) == 0 {
+				return entries
+			}
+		}
+		for _, p := range s.byPath {
+			if !p.Local {
+				identify(p)
+			}
+			if len(unknown) == 0 {
+				break
 			}
 		}
 	}

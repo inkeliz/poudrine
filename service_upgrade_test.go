@@ -71,11 +71,34 @@ func TestConfigurationEditWaitsForActiveServiceBuild(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	registered, ticks := make(chan *Builder), make(chan time.Time)
+	repoPolicy := make(chan PackageOverlays)
 	done := make(chan configTransition, 1)
-	go func() { done <- watchConfiguration(ctx, "run", opts, registered, ticks) }()
+	go func() { done <- watchConfiguration(ctx, "run", opts, registered, ticks, repoPolicy) }()
 	registered <- worker
+	write(`{"web_tls":false,"jobs":2,"package_overlays":{"databases/mydumper":{}}}`)
+	ticks <- time.Now()
+	select {
+	case overlays := <-repoPolicy:
+		if _, ok := overlays["databases/mydumper"]; !ok {
+			t.Fatal("repository still allows the stock package")
+		}
+	case <-done:
+		t.Fatal("overlay interrupted an active build")
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
 	write(`{"web_tls":false,"jobs":2}`)
 	ticks <- time.Now()
+	select {
+	case overlays := <-repoPolicy:
+		if len(overlays) != 0 {
+			t.Fatal("removing an overlay left the repository restricted")
+		}
+	case <-done:
+		t.Fatal("removing the overlay interrupted an active build")
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
 	select {
 	case ticks <- time.Now(): // First check left the active generation intact.
 	case change := <-done:

@@ -117,6 +117,7 @@ func (a *Admin) buildOrigins(w http.ResponseWriter, r *http.Request, body []byte
 		}
 		origins = reply.Origins
 	}
+	origins = a.cfg.ActiveSettings.PackageOverlays.buildOrigins(origins)
 	adminJSON(w, struct {
 		Origins []string `json:"origins"`
 	}{origins})

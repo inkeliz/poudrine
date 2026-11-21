@@ -112,7 +112,7 @@ func TestWorkingHoursLiveReload(t *testing.T) {
 	defer cancel()
 	ticks, ready := make(chan time.Time), make(chan *Builder)
 	done := make(chan configTransition, 1)
-	go func() { done <- watchConfiguration(ctx, "serve", o, ready, ticks) }()
+	go func() { done <- watchConfiguration(ctx, "serve", o, ready, ticks, nil) }()
 	ready <- b
 	writeConfig(`{"web_tls":false,"working_hours":"00:00-10:00"}`)
 	ticks <- time.Now()

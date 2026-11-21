@@ -16,6 +16,10 @@ const liveArchiveDirName = "live-packages"
 const liveURLPrefix = "All/poudrine/"
 const liveDownloadGrace = 24 * time.Hour
 
+// Retain local-build provenance across restarts and the download grace period.
+// Older links may have been published from Poudriere's binary fetch cache.
+const liveOverlayPrefix = "overlay-"
+
 // Only the package URLs selected for a signed catalog get a download link.
 // A client using that catalog can finish fetching after Poudriere rotates
 // its repository, even if the web service has since restarted.
@@ -38,7 +42,11 @@ func (c *Catalog) retainLiveDownloads(s *catalogSnapshot, live map[string]livePa
 			created = true
 		}
 		file := candidate.file
-		dst := filepath.Join(dir, filepath.Base(p.Path))
+		filename := filepath.Base(p.Path)
+		if !candidate.fetched && p.overlayDigest != "" {
+			filename = liveOverlayPrefix + filename
+		}
+		dst := filepath.Join(dir, filename)
 		if err := os.Link(file.path, dst); err != nil {
 			if !errors.Is(err, os.ErrExist) {
 				return err
@@ -75,11 +83,19 @@ func (c *Catalog) openLiveDownload(sum string) (*os.File, error) {
 		return nil, os.ErrNotExist
 	}
 	flags := os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
-	f, err := os.OpenFile(filepath.Join(c.liveDir, "published", sum+".pkg"), flags, 0)
-	if errors.Is(err, os.ErrNotExist) {
-		return os.OpenFile(filepath.Join(c.liveDir, "retired", sum+".pkg"), flags, 0)
+	prefixes := []string{""}
+	if len(c.overlays) != 0 {
+		prefixes = []string{liveOverlayPrefix, ""}
 	}
-	return f, err
+	for _, prefix := range prefixes {
+		for _, dir := range []string{"published", "retired"} {
+			f, err := os.OpenFile(filepath.Join(c.liveDir, dir, prefix+sum+".pkg"), flags, 0)
+			if !errors.Is(err, os.ErrNotExist) {
+				return f, err
+			}
+		}
+	}
+	return nil, os.ErrNotExist
 }
 
 func sameBuilderRepository(o options) bool {
@@ -165,10 +181,11 @@ func pruneLiveDownloads(cat *Catalog, candidates map[string]livePackage, now tim
 		}
 		for _, entry := range entries {
 			name := entry.Name()
-			if !entry.Type().IsRegular() || (liveDownloadDigest(liveURLPrefix+name) == "" && !strings.HasPrefix(name, ".capture-")) {
+			source := strings.TrimPrefix(name, liveOverlayPrefix)
+			if !entry.Type().IsRegular() || (liveDownloadDigest(liveURLPrefix+source) == "" && !strings.HasPrefix(name, ".capture-")) {
 				continue
 			}
-			if dir != retired && keep[name] {
+			if dir != retired && keep[source] {
 				continue
 			}
 			path := filepath.Join(dir, name)

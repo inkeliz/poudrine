@@ -32,7 +32,7 @@ func TestSupervisorSettingsChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { web.Close() })
-	a := &configAuthority{path: path}
+	a := &configAuthority{path: path, builder: &Builder{}}
 	go a.serve(parent)
 	c := newConfigClient(web)
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
@@ -65,6 +65,7 @@ func TestSupervisorSettingsChannel(t *testing.T) {
 	}
 	old, rev := *reply.Settings, reply.Revision
 	old.RepoURL = "https://ports.example/repo"
+	old.PackageOverlays = PackageOverlays{"databases/mydumper": {DefaultVersions: map[string]string{"mysql": "10.11m"}}}
 	payload, _ = json.Marshal(map[string]any{"settings": old, "revision": rev})
 	if _, status, _ := c.submit(brokerRequest(t, other, "PUT", "/api/admin/config", payload), payload); status != 401 {
 		t.Fatal("forged config signature accepted")
@@ -76,6 +77,10 @@ func TestSupervisorSettingsChannel(t *testing.T) {
 	}
 	if nextRev == rev {
 		t.Fatal("settings revision did not change")
+	}
+	reply, err = c.read(brokerRequest(t, key, methodQuery, "/api/admin/config", queryBody), queryBody)
+	if err != nil || !reply.WorkerPending || !reply.Settings.PackageOverlays.equal(old.PackageOverlays) {
+		t.Fatalf("expected saved overlay pending worker reload: %+v, %v", reply, err)
 	}
 	if _, status, _ := c.submit(first, payload); status != 409 {
 		t.Fatal("accepted stale revision")

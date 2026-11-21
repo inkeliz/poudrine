@@ -202,6 +202,22 @@
                   <label>Jail name<input name="jail" required></label>
                   <label>Ports tree name<input name="ports" required></label>
                 </div>
+                <h3>Package overlays</h3>
+                <p>Build these ports locally with your settings. Clients can install them once a matching build is available. Each entry covers all flavors and subpackages of the port.</p>
+                <div id="package-overlays"></div>
+                <button type="button" id="add-overlay">Add port</button>
+                <template id="overlay-template">
+                  <fieldset class="overlay-row">
+                    <legend>Port overlay</legend>
+                    <div class="settings-grid">
+                      <label>Port origin<input data-overlay="origin" required maxlength="255" placeholder="databases/mydumper"></label>
+                      <label>Default versions<input data-overlay="default_versions" placeholder="mysql=12.3m"><small>Separate <code>name=version</code> choices with spaces. For mydumper with MariaDB 12.3, enter <code>mysql=12.3m</code>.</small></label>
+                      <label>Enable options<input data-overlay="options_set" placeholder="DOCS NLS"><small>Separate FreeBSD port option names with spaces.</small></label>
+                      <label>Disable options<input data-overlay="options_unset" placeholder="EXAMPLES"></label>
+                    </div>
+                    <button type="button" data-remove-overlay>Remove port</button>
+                  </fieldset>
+                </template>
               </div>
             </details>
             <details name="service-settings" class="settings-tab">

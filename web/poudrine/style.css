@@ -161,6 +161,9 @@ input[aria-invalid="true"] {border-color: #a4473f}
 .settings-grid label {display: flex; min-width: 0; flex-direction: column; gap: 5px}
 .settings-grid input {width: 100%; font: .91rem/1.5 var(--mono); border-color: #c4bfd0}
 .settings-grid small {font-size: .79rem; overflow-wrap: anywhere}
+.settings-panel .overlay-row {margin: 12px 0; padding: 0 14px 14px; border: 1px solid var(--line); border-radius: 8px}
+.overlay-row legend {padding: 0 5px; color: var(--muted); font-size: .85rem}
+.overlay-row button, #add-overlay {margin-top: 12px}
 .tls-toggle {display: flex; align-items: center; gap: 9px; width: fit-content; margin-top: 14px}
 .tls-toggle input {width: 1.1rem; height: 1.1rem; margin: 0; accent-color: var(--violet)}
 .settings-footer {display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; padding: 14px var(--settings-inset); background: #faf9fd; border-top: 1px solid var(--line); border-radius: 0 0 13px 13px}

@@ -29,12 +29,17 @@ type CatalogPackage struct {
 	Size                                               int64
 	Local                                              bool
 	live                                               bool
+	overlayDigest                                      string
 }
 
 type manifest struct {
 	pkg      CatalogPackage
 	raw      json.RawMessage
 	provides []string
+}
+type packageAnnotations struct {
+	Flavor, Subpackage string
+	OverlayDigest      string `json:"poudrine_overlay"`
 }
 type repoContent struct {
 	byName map[string]manifest
@@ -45,10 +50,11 @@ type metadataFile struct {
 	etag string
 }
 type catalogSnapshot struct {
+	overlays      PackageOverlays
 	bootstrapPath string
 	byPath        map[string]CatalogPackage
 	pathByName    map[string]string
-	// Only the FreeBSD packages displaced by local builds need a second copy.
+	// Keep FreeBSD versions for comparison even when local policy hides them.
 	displaced     map[string]CatalogPackage
 	compiled      map[string]CatalogPackage
 	compiledAt    map[string]time.Time
@@ -80,8 +86,31 @@ func (s *catalogSnapshot) freeBSDPackage(name string) (CatalogPackage, bool) {
 	return CatalogPackage{}, false
 }
 
+// Local packages carry the settings fingerprint baked into their manifest by
+// the ports framework. An older build can have precisely the same pkg version.
+func (s *catalogSnapshot) permitsLocal(p CatalogPackage, fetched bool) bool {
+	if s == nil || len(s.overlays) == 0 {
+		return p.overlayDigest == ""
+	}
+	origin := basePort(p.Origin)
+	// A different port that happens to emit the same package name cannot
+	// supply an overlaid FreeBSD package either.
+	if stock, ok := s.displaced[p.Name]; ok {
+		stockOrigin := basePort(stock.Origin)
+		if _, reserved := s.overlays[stockOrigin]; reserved && (stockOrigin != origin || !compatibleABI(p.ABI, stock.ABI)) {
+			return false
+		}
+	}
+	overlay, configured := s.overlays[origin]
+	if !configured {
+		return p.overlayDigest == ""
+	}
+	return !fetched && p.overlayDigest != "" && p.overlayDigest == overlay.digest()
+}
+
 type Catalog struct {
 	upstream               *url.URL
+	overlays               PackageOverlays
 	fingerprints, localDir string
 	jailRoot               string
 	client                 *http.Client
@@ -204,7 +233,7 @@ func parseCatalog(b []byte, member string, local bool) (repoContent, error) {
 			Path, Repopath, Name, Origin, Version, Sum, ABI, Arch string
 			Pkgsize                                               *int64
 			Provides                                              []string `json:"shlibs_provided"`
-			Annotations                                           struct{ Flavor, Subpackage string }
+			Annotations                                           packageAnnotations
 		}
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return err
@@ -224,6 +253,7 @@ func parseCatalog(b []byte, member string, local bool) (repoContent, error) {
 		}
 		origin := packageBuildOrigin(m.Origin, m.Annotations.Flavor, m.Annotations.Subpackage)
 		p := CatalogPackage{Path: m.Path, Name: m.Name, Version: m.Version, Origin: m.Origin, BuildOrigin: origin, Sum: m.Sum, Size: *m.Pkgsize, Local: local, ABI: packageABI(m.ABI, m.Arch)}
+		p.overlayDigest = m.Annotations.OverlayDigest
 		if old, ok := repo.byName[p.Name]; ok && comparePkgVersions(old.pkg.Version, p.Version) >= 0 {
 			return nil
 		}
@@ -351,6 +381,7 @@ func (c *Catalog) publishCatalog(ctx context.Context, upstream *repoContent, rev
 		localFiles[".pkg-cache"], _ = os.Stat(filepath.Join(c.localDir, ".pkg-cache"))
 	}
 	s := &catalogSnapshot{
+		overlays:      c.overlays,
 		byPath:        make(map[string]CatalogPackage, len(repo.byName)),
 		pathByName:    make(map[string]string, len(repo.byName)),
 		displaced:     make(map[string]CatalogPackage),
@@ -361,14 +392,21 @@ func (c *Catalog) publishCatalog(ctx context.Context, upstream *repoContent, rev
 		metadata:      make(map[string]metadataFile),
 	}
 	arches := map[string]bool{}
-	for _, m := range repo.byName {
+	for name, m := range repo.byName {
 		if i := strings.LastIndexByte(m.pkg.ABI, ':'); i > 0 {
 			arches[m.pkg.ABI] = true
 			arches[m.pkg.ABI[:i]+":*"] = true
 		}
+		if _, overlaid := c.overlays[basePort(m.pkg.Origin)]; overlaid {
+			s.displaced[name] = m.pkg
+			delete(repo.byName, name)
+		}
 	}
 	for name, m := range local.byName {
 		if !arches[m.pkg.ABI] {
+			continue
+		}
+		if !s.permitsLocal(m.pkg, false) {
 			continue
 		}
 		old, exists := repo.byName[name]
@@ -403,15 +441,19 @@ func (c *Catalog) publishCatalog(ctx context.Context, upstream *repoContent, rev
 			}
 			continue
 		}
+		if fetched && !s.permitsLocal(m.pkg, true) {
+			continue
+		}
 		if !fetched {
 			file := &compiledArchive{path: filepath.Join(c.localDir, m.pkg.Path), info: stat}
-			if prev := c.current.Load(); prev != nil && prev.compiled[name].Sum == m.pkg.Sum {
+			if prev := c.current.Load(); prev != nil && prev.compiled[name] == m.pkg {
 				if prior := prev.compiledFiles[name]; prior != nil && prior.path == file.path && sameArchive(prior.info, stat) {
 					file = prior
 				}
 			}
-			// Publish the compiled manifest (including its checksum) on a tie.
-			if exists && versionOrder == 0 && m.pkg.BuildOrigin == old.pkg.BuildOrigin {
+			// Validate custom builds and allow a verified native build to win
+			// a version tie with the FreeBSD package.
+			if m.pkg.overlayDigest != "" || exists && versionOrder == 0 && m.pkg.BuildOrigin == old.pkg.BuildOrigin {
 				if err := file.verify(m.pkg); err != nil {
 					log.Printf("skipping invalid compiled package %s: %v", m.pkg.Path, err)
 					continue

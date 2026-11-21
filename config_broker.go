@@ -55,7 +55,7 @@ type configReply struct {
 	JobChunk       []BuildJob     `json:",omitempty"`
 	AlreadyQueued  bool           `json:",omitempty"`
 	Settings       *Configuration `json:",omitempty"`
-	HoursPending   bool           `json:",omitempty"`
+	WorkerPending  bool           `json:"HoursPending,omitempty"` // Keep the wire name during an in-place service upgrade.
 	ServerTime     string         `json:",omitempty"`
 	Revision       string         `json:",omitempty"`
 	PublicKey      []byte         `json:",omitempty"`
@@ -357,7 +357,8 @@ func (a *configAuthority) handle(m configMessage) configReply {
 	if m.Method == methodQuery && (m.Path == originsPath || m.Path == packagesPath) {
 		reply := configReply{Status: http.StatusOK}
 		if a.builder != nil {
-			reply.Origins = configuredOrigins(a.builder.cfg.PackagesFile)
+			cfg := a.builder.cfg
+			reply.Origins = cfg.PackageOverlays.buildOrigins(configuredOrigins(cfg.PackagesFile))
 			if m.Path == packagesPath {
 				reply.PoudriereBytes = a.builder.Status().PoudriereBytes
 			}
@@ -387,7 +388,7 @@ func (a *configAuthority) handle(m configMessage) configReply {
 		reply := configReply{Settings: &current, Revision: rev, Status: 200, ServerTime: time.Now().Format("15:04 MST")}
 		if a.builder != nil {
 			hours, _ := parseWorkingHours(current.WorkingHours) // loadConfiguration validated the schedule.
-			reply.HoursPending = a.builder.currentWorkingHours() != hours
+			reply.WorkerPending = a.builder.currentWorkingHours() != hours || !a.builder.cfg.PackageOverlays.equal(current.PackageOverlays)
 		}
 		return reply
 	}
