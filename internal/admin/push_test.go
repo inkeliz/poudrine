@@ -179,6 +179,10 @@ func TestUpgradePushSubscriptions(t *testing.T) {
 	if _, err := New(cfg); err != nil {
 		t.Fatal(err)
 	}
+	var lang string
+	if err := db.QueryRow("SELECT language FROM push_subscriptions WHERE endpoint='https://push.invalid/old'").Scan(&lang); err != nil || lang != "en" {
+		t.Fatalf("legacy subscription language = %q, %v", lang, err)
+	}
 	var since int64
 	if err := db.QueryRow("SELECT since_ns FROM push_build_watch WHERE endpoint='https://push.invalid/old'").Scan(&since); err != nil || since < before.UnixNano() {
 		t.Fatal("legacy enrollment cutoff", since, err)
@@ -186,10 +190,16 @@ func TestUpgradePushSubscriptions(t *testing.T) {
 	if _, err := db.Exec("UPDATE push_build_watch SET since_ns=123"); err != nil {
 		t.Fatal(err)
 	}
+	if err := cfg.DB.SubscribePush(t.Context(), "https://push.invalid/old", "auth", "device", "pt-BR"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := New(cfg); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow("SELECT since_ns FROM push_build_watch").Scan(&since); err != nil || since != 123 {
 		t.Fatal("restart moved enrollment cutoff", since, err)
+	}
+	if err := db.QueryRow("SELECT language FROM push_subscriptions").Scan(&lang); err != nil || lang != "pt-BR" {
+		t.Fatalf("re-enrolled subscription language = %q, %v", lang, err)
 	}
 }

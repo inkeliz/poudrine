@@ -65,7 +65,8 @@ func (a *Admin) configuration(w http.ResponseWriter, r *http.Request, body []byt
 		var cfg config.Configuration
 		var revision string
 		var err error
-		serverTime := time.Now().Format("15:04 MST")
+		serverTimeAt := time.Now()
+		var serverTime string // Older Management pages display this field verbatim.
 		var workerPending bool
 		if a.cfg.Broker != nil {
 			reply, err := a.cfg.Broker.Read(r, body)
@@ -74,7 +75,9 @@ func (a *Admin) configuration(w http.ResponseWriter, r *http.Request, body []byt
 				return
 			}
 			cfg, revision, workerPending, serverTime = *reply.Settings, reply.Revision, reply.WorkerPending, reply.ServerTime
+			serverTimeAt = reply.ServerTimeAt
 		} else {
+			serverTime = serverTimeAt.Format("15:04 MST")
 			cfg, revision, err = config.LoadConfiguration(a.cfg.ConfigPath)
 			if err != nil {
 				if errors.Is(err, config.ErrInvalidConfig) {
@@ -91,12 +94,13 @@ func (a *Admin) configuration(w http.ResponseWriter, r *http.Request, body []byt
 			return
 		}
 		adminJSON(w, struct {
-			Settings   config.Configuration `json:"settings"`
-			Defaults   map[string]string    `json:"defaults"`
-			Revision   string               `json:"revision"`
-			Active     bool                 `json:"active"`
-			ServerTime string               `json:"server_time"`
-		}{cfg, defaults, revision, cfg.SameGeneration(a.cfg.ActiveSettings) && !workerPending, serverTime})
+			Settings     config.Configuration `json:"settings"`
+			Defaults     map[string]string    `json:"defaults"`
+			Revision     string               `json:"revision"`
+			Active       bool                 `json:"active"`
+			ServerTime   string               `json:"server_time"`
+			ServerTimeAt time.Time            `json:"server_time_at,omitzero"`
+		}{cfg, defaults, revision, cfg.SameGeneration(a.cfg.ActiveSettings) && !workerPending, serverTime, serverTimeAt})
 		return
 	}
 	var revision string

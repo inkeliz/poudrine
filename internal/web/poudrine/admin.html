@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-locale="{{.Locale.Tag}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -125,12 +125,12 @@
         <div class="history-summary">
           <p><strong id="history-count"></strong> <span id="history-range"></span></p>
           <ul class="history-legend" aria-label="Outcomes">
-            <li><i class="succeeded" aria-hidden="true"></i>Built <b id="total-succeeded">0</b></li>
-            <li><i class="failed" aria-hidden="true"></i>Failed <b id="total-failed">0</b></li>
+            <li><i class="succeeded" aria-hidden="true"></i>Built <b id="total-succeeded"></b></li>
+            <li><i class="failed" aria-hidden="true"></i>Failed <b id="total-failed"></b></li>
           </ul>
         </div>
         <div class="history-plot" role="img" id="history-plot" aria-label="Package build history chart">
-          <div class="chart-scale" aria-hidden="true"><span id="chart-max"></span><span id="chart-mid"></span><span>0</span></div>
+          <div class="chart-scale" aria-hidden="true"><span id="chart-max"></span><span id="chart-mid"></span><span>{{.Locale.Sprint 0}}</span></div>
           <svg class="chart-bars" id="chart-bars" preserveAspectRatio="none" aria-hidden="true" focusable="false"></svg>
           <div class="chart-ticks" id="chart-ticks" aria-hidden="true"></div>
         </div>
@@ -304,7 +304,7 @@
             <th scope="col">Source</th><th scope="col">Port version</th><th scope="col">Local (FreeBSD)</th>
             <th scope="col"><button type="button" data-sort="last_seen">Last activity</button></th>
             <th scope="col" class="numeric"><button type="button" data-sort="build_seconds" title="Elapsed time to build the local package, including pauses">Build time</button></th>
-            <th scope="col" class="numeric"><button type="button" data-sort="size">Size (MB)</button></th>
+            <th scope="col" class="numeric"><button type="button" data-sort="size">Size</button></th>
             <th scope="col" class="numeric"><button type="button" data-sort="consumers">Consumers</button></th>
           </tr></thead>
           <tbody id="packages"></tbody>

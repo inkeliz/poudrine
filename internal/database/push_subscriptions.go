@@ -14,9 +14,9 @@ func (s DB) SavePushKeys(private, public string) error {
 	return err
 }
 
-func (s DB) SubscribePush(ctx context.Context, endpoint, auth, p256dh string) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO push_subscriptions(endpoint,auth,p256dh) VALUES(?,?,?)
- ON CONFLICT(endpoint) DO UPDATE SET auth=excluded.auth,p256dh=excluded.p256dh`, endpoint, auth, p256dh)
+func (s DB) SubscribePush(ctx context.Context, endpoint, auth, p256dh, language string) error {
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO push_subscriptions(endpoint,auth,p256dh,language) VALUES(?,?,?,?)
+ ON CONFLICT(endpoint) DO UPDATE SET auth=excluded.auth,p256dh=excluded.p256dh,language=excluded.language`, endpoint, auth, p256dh, language)
 	return err
 }
 
@@ -38,7 +38,8 @@ const pushSubscriptionsSchema = `CREATE TABLE IF NOT EXISTS push_identity (
 CREATE TABLE IF NOT EXISTS push_subscriptions (
 	endpoint TEXT PRIMARY KEY,
 	auth TEXT NOT NULL,
-	p256dh TEXT NOT NULL
+	p256dh TEXT NOT NULL,
+	language TEXT NOT NULL DEFAULT 'en'
 );
 CREATE TRIGGER IF NOT EXISTS push_watch_new AFTER INSERT ON push_subscriptions BEGIN
  INSERT INTO push_build_watch VALUES(NEW.endpoint, CAST(unixepoch('subsec') * 1000000000 AS INTEGER));

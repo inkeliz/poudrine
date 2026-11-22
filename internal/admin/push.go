@@ -19,6 +19,9 @@ import (
 	catalogpkg "github.com/inkeliz/poudrine/internal/catalog"
 	"github.com/inkeliz/poudrine/internal/database"
 	"github.com/inkeliz/poudrine/internal/packageinfo"
+	"github.com/inkeliz/poudrine/internal/weblocale"
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
 )
 
 func defaultPushContact(repositoryURL string) (string, error) {
@@ -83,7 +86,7 @@ func (a *Admin) subscribe(w http.ResponseWriter, r *http.Request, body []byte) {
 		http.Error(w, "Invalid push encryption keys", http.StatusBadRequest)
 		return
 	}
-	err = a.cfg.DB.SubscribePush(r.Context(), sub.Endpoint, sub.Keys.Auth, sub.Keys.P256dh)
+	err = a.cfg.DB.SubscribePush(r.Context(), sub.Endpoint, sub.Keys.Auth, sub.Keys.P256dh, weblocale.ForRequest(r).String())
 	if err != nil {
 		adminInternal(w, err)
 		return
@@ -138,7 +141,8 @@ func buildAlert(p database.PushBuild, snapshot *catalogpkg.Snapshot) (alert *pac
 		return nil, false
 	}
 	id := sha256.Sum256([]byte(fmt.Sprintf("%d/%s", p.Started, p.Pkg)))
-	return &packageAlert{Body: fmt.Sprintf("%s built locally. FreeBSD has %s.", p.Pkg, upstream.Version), Tag: base64.RawURLEncoding.EncodeToString(id[:18])}, false
+	printer := message.NewPrinter(language.Make(p.Language))
+	return &packageAlert{Body: printer.Sprintf("%s built locally. FreeBSD has %s.", p.Pkg, upstream.Version), Tag: base64.RawURLEncoding.EncodeToString(id[:18])}, false
 }
 
 // retry distinguishes a temporary transport/service failure from an invalid

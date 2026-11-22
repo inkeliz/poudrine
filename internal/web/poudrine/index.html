@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-locale="{{.Locale.Tag}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -32,9 +32,9 @@
       <p>FreeBSD packages and local Poudriere builds in one signed catalog.</p>
     </div>
     <div class="metrics">
-      <div class="metric"><span>Available packages</span><strong id="catalog-packages">{{if .Stats.Updated}}{{.Stats.Packages}}{{else}}—{{end}}</strong></div>
-      <div class="metric"><span>Ahead of FreeBSD</span><strong id="catalog-ahead">{{if .Stats.Updated}}{{.Stats.Ahead}}{{else}}—{{end}}</strong></div>
-      <div class="metric publication"><span>Catalog updated</span><time id="catalog-updated"{{with .Stats.Updated}} datetime="{{.Format "2006-01-02T15:04:05Z07:00"}}"{{end}}>{{with .Stats.Updated}}{{.UTC.Format "2 Jan 2006, 15:04 UTC"}}{{else}}Pending{{end}}</time></div>
+      <div class="metric"><span>Available packages</span><strong id="catalog-packages" lang="{{.Locale.Tag}}">{{if .Published}}{{.Locale.Sprint .Stats.Packages}}{{else}}—{{end}}</strong></div>
+      <div class="metric"><span>Ahead of FreeBSD</span><strong id="catalog-ahead" lang="{{.Locale.Tag}}">{{if .Published}}{{.Locale.Sprint .Stats.Ahead}}{{else}}—{{end}}</strong></div>
+      <div class="metric publication"><span>Catalog updated</span><time id="catalog-updated"{{with .Published}} datetime="{{.}}"{{end}}>{{with .Published}}{{.}}{{else}}Pending{{end}}</time></div>
     </div>
     <p id="catalog-error" hidden>Could not refresh catalog status. <button type="button" id="catalog-retry">Retry</button></p>
   </section>

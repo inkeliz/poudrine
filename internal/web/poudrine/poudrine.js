@@ -4,6 +4,45 @@ function el(id) {
   return document.getElementById(id);
 }
 
+// HTML carries the formatting locale negotiated from Accept-Language.
+// The same script also runs as a service worker, without a document.
+const display = typeof document === "undefined" ? null : pageFormats(document.documentElement.dataset.locale || "en");
+
+function pageFormats(locale) {
+  const number = new Intl.NumberFormat(locale).format;
+  const percent = new Intl.NumberFormat(locale, {style: "percent", maximumFractionDigits: 1}).format;
+  const relative = new Intl.RelativeTimeFormat(locale, {numeric: "auto"});
+  const list = new Intl.ListFormat(locale, {type: "unit", style: "short"});
+  const names = new Intl.ListFormat(locale);
+  const collate = new Intl.Collator(locale, {numeric: true});
+  const units = new Map();
+  function unit(value, name, width = "short") {
+    const key = name + "/" + width;
+    if (!units.has(key)) {
+      units.set(key, new Intl.NumberFormat(locale, {style: "unit", unit: name, unitDisplay: width, maximumFractionDigits: 2}));
+    }
+    return units.get(key).format(value);
+  }
+  return {locale, number, percent, relative, list, names, collate, unit};
+}
+
+function serverTime(stamp, options) {
+  const zone = stamp?.match(/(Z|[+-]\d{2}:\d{2})$/)?.[1];
+  const instant = new Date(stamp);
+  if (!zone || Number.isNaN(instant.getTime())) return "";
+  const timeZone = zone === "Z" ? "UTC" : zone;
+  try {
+    return new Intl.DateTimeFormat(display.locale, {...options, timeZone}).format(instant);
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    // Older browsers only accept named time zones. Format the server's wall
+    // clock in UTC, then restore its offset in the locale's time-zone field.
+    const wall = new Date(stamp.replace(/(Z|[+-]\d{2}:\d{2})$/, "Z"));
+    const parts = new Intl.DateTimeFormat(display.locale, {...options, timeZone: "UTC"}).formatToParts(wall);
+    return parts.map(p => p.type === "timeZoneName" ? "UTC" + zone : p.value).join("");
+  }
+}
+
 if (typeof document === "undefined") {
   listenForPackageNotifications();
 } else if (document.body.classList.contains("client-page")) {
@@ -86,13 +125,13 @@ function initClientSetup() {
     }
     const time = new Date(stamp);
     element.dateTime = time.toISOString();
-    element.textContent = time.toLocaleString(undefined, {dateStyle: "medium", timeStyle: "short"});
+    element.textContent = time.toLocaleString(display.locale, {dateStyle: "medium", timeStyle: "short"});
   }
 
   function showCatalog(page) {
     const stamp = page.getElementById("catalog-updated").getAttribute("datetime");
     for (const id of ["catalog-packages", "catalog-ahead"]) {
-      el(id).textContent = stamp ? Number(page.getElementById(id).textContent).toLocaleString() : "—";
+      el(id).textContent = page.getElementById(id).textContent;
     }
     const state = el("catalog-state");
     const ready = stamp ? "yes" : "no";
@@ -131,13 +170,24 @@ function initClientSetup() {
   setInterval(refreshIfDue, 60000);
 }
 
-function buildDuration(seconds) {
+function buildDuration(seconds, width = "narrow") {
   if (!Number.isFinite(seconds) || seconds < 0) return "—";
   seconds = Math.floor(seconds);
-  if (seconds < 60) return seconds + "s";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return minutes + "m " + seconds % 60 + "s";
-  return Math.floor(minutes / 60) + "h " + minutes % 60 + "m";
+  const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60);
+  const parts = [];
+  if (hours) parts.push(display.unit(hours, "hour", width));
+  if (minutes) parts.push(display.unit(minutes, "minute", width));
+  if ((!hours || width === "long") && (seconds % 60 || !parts.length)) {
+    parts.push(display.unit(seconds % 60, "second", width));
+  }
+  return display.list.format(parts);
+}
+
+function relativeTime(seconds) {
+  for (const [scale, unit] of [[86400, "day"], [3600, "hour"], [60, "minute"]]) {
+    if (Math.abs(seconds) >= scale) return display.relative.format(Math.trunc(seconds / scale), unit);
+  }
+  return display.relative.format(Math.trunc(seconds), "second");
 }
 
 async function readBuildEvents(response, onBuild) {
@@ -180,7 +230,7 @@ function createBuildResults(request, el, node) {
   const filter = el("result-filter"), more = el("result-more");
   const status = el("result-status"), feedback = el("result-feedback"), retryAll = el("result-retry-all");
   const dialog = el("package-log-dialog"), output = el("package-log-output"), earlier = el("package-log-earlier");
-  const runDate = new Intl.DateTimeFormat(undefined, {dateStyle: "medium", timeStyle: "long", hourCycle: "h23"});
+  const runDate = new Intl.DateTimeFormat(display.locale, {dateStyle: "medium", timeStyle: "long"});
   let view, selected = "", listVersion = 0, focusPackage, worker, submitting = false, retryVersion = 0;
   let entries = [], visible = [], shown = 0;
   const outcomes = {succeeded: "Built", failed: "Failed", skipped: "Skipped"};
@@ -232,7 +282,7 @@ function createBuildResults(request, el, node) {
       earlier.hidden = page.start === 0;
       earlier.textContent = "Load earlier output";
       el("package-log-status").textContent = page.size === 0 ? "The log is empty." :
-        page.start > 0 ? "Showing output from byte " + page.start.toLocaleString() + " of " + page.size.toLocaleString() + "." : "Showing the log from the beginning.";
+        page.start > 0 ? "Showing output from byte " + display.number(page.start) + " of " + display.number(page.size) + "." : "Showing the log from the beginning.";
       output.scrollTop = before == null ? output.scrollHeight : top + output.scrollHeight - height;
     } catch (error) {
       if (version !== logVersion || !dialog.open) return;
@@ -283,7 +333,7 @@ function createBuildResults(request, el, node) {
     label.dataset.outcome = outcome;
     name.append(label, node("strong", pkg.origin), node("small", pkg.package));
     const detail = outcome === "failed" ? [pkg.phase && "Phase " + pkg.phase, pkg.reason].filter(Boolean).join(" · ") :
-      outcome === "skipped" ? (blockers.length ? "Blocked by " + blockers.join(", ") : "") :
+      outcome === "skipped" ? (blockers.length ? "Blocked by " + display.names.format(blockers) : "") :
       Number.isFinite(pkg.build_seconds) ? "Built in " + buildDuration(pkg.build_seconds) : "";
     if (detail) {
       const reason = node("p", detail);
@@ -307,7 +357,7 @@ function createBuildResults(request, el, node) {
     if (children?.length) {
       const deps = document.createElement("details"), packages = document.createElement("ul");
       deps.className = "result-deps";
-      deps.append(node("summary", children.length.toLocaleString() + (children.length === 1 ? " skipped dependent" : " skipped dependents")));
+      deps.append(node("summary", "Skipped dependents (" + display.number(children.length) + ")"));
       function showDependents() {
         if (!deps.open || packages.childElementCount) return;
         const rows = document.createDocumentFragment();
@@ -379,7 +429,7 @@ function createBuildResults(request, el, node) {
       ...failures.map(pkg => ({pkg, outcome: "failed", children: blocked.get(pkg.package)})),
       ...skipped.values()
     ];
-    entries.sort((a, b) => a.pkg.package.localeCompare(b.pkg.package));
+    entries.sort((a, b) => display.collate.compare(a.pkg.package, b.pkg.package));
     renderPackages(Math.max(shown, pageSize));
     retryAll.hidden = !failures.length && !skipped.size;
     retryControls();
@@ -390,7 +440,7 @@ function createBuildResults(request, el, node) {
     const newest = !selected || runs[0] === started && runInstant(started) >= runInstant(worker?.started);
     const run = (current ? "Current run" : newest ? "Latest run" : "Previous run") + " · " + runDate.format(new Date(started));
     status.textContent = entries.length
-      ? [run, completed.length.toLocaleString() + " built", failures.length.toLocaleString() + " failed", skipped.size.toLocaleString() + " skipped"].join(" · ")
+      ? [run, display.number(completed.length) + " built", display.number(failures.length) + " failed", display.number(skipped.size) + " skipped"].join(" · ")
       : run + (current ? " · Waiting for package results." : " · No package results were recorded.");
   }
 
@@ -503,24 +553,13 @@ function createBuildView(request, el, node) {
   const triggers = {manual: "Manual request", scheduled: "Scheduled", tracked: "Tracked ports changed", retry: "Retry"};
   const results = {succeeded: "Last run succeeded", failed: "Last run failed", interrupted: "Last run interrupted"};
   const outcomes = ["succeeded", "failed"];
-  const ranges = {hour: "24 hours", day: "30 days", week: "12 weeks", month: "12 months"};
-  const fullDate = new Intl.DateTimeFormat(undefined, {dateStyle: "medium", timeStyle: "short", hourCycle: "h23"});
+  const fullDate = new Intl.DateTimeFormat(display.locale, {dateStyle: "medium", timeStyle: "short"});
+  const utcDate = new Intl.DateTimeFormat(display.locale, {dateStyle: "medium", timeStyle: "medium", timeZone: "UTC"});
 
   function timeValue(value) {
     if (!value || value.startsWith("0001-01-01")) return null;
     const time = new Date(value);
     return Number.isNaN(time.getTime()) ? null : time;
-  }
-
-  function delayLabel(seconds) {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor(seconds % 3600 / 60);
-    const parts = [];
-    if (hours) parts.push(hours + (hours === 1 ? " hour" : " hours"));
-    if (minutes) parts.push(minutes + (minutes === 1 ? " minute" : " minutes"));
-    const remainder = seconds % 60;
-    if (remainder || !parts.length) parts.push(remainder + (remainder === 1 ? " second" : " seconds"));
-    return parts.join(" ");
   }
 
   function drawBuild(build) {
@@ -534,7 +573,7 @@ function createBuildView(request, el, node) {
     const progress = build.progress;
     const packageFailure = !active && (build.outcome === "failed" || build.stage === "error") && progress?.failed > 0;
     const message = packageFailure
-      ? progress.failed.toLocaleString() + (progress.failed === 1 ? " package" : " packages") + " failed to build."
+      ? "Packages that failed to build (" + display.number(progress.failed) + ")"
       : build.message;
     el("build-message").textContent = build.pause_error || (build.paused ? "Package progress is held until the next working window." :
       opening && !active ? "" : message === label ? "" : (message || ""));
@@ -548,7 +587,7 @@ function createBuildView(request, el, node) {
     if (started && active) fact("Elapsed", buildDuration(Math.max(0, Date.now() - started) / 1000));
     else if (started && finished && finished >= started) fact("Duration", buildDuration((finished - started) / 1000));
     if (build.trigger && triggers[build.trigger]) fact("Trigger", triggers[build.trigger]);
-    if (Number.isInteger(build.origins)) fact(active ? "Origins in this run" : "Origins in last run", build.origins.toLocaleString());
+    if (Number.isInteger(build.origins)) fact(active ? "Origins in this run" : "Origins in last run", display.number(build.origins));
     if (active && started) fact("Started", fullDate.format(started));
     else if (finished) fact("Finished", fullDate.format(finished));
     el("build-facts").replaceChildren(...facts);
@@ -562,9 +601,9 @@ function createBuildView(request, el, node) {
       const bar = el("build-progress");
       bar.max = progress.total;
       bar.value = Math.min(completed, progress.total);
-      el("progress-label").textContent = completed.toLocaleString() + " of " + progress.total.toLocaleString() + " queued packages processed";
-      el("progress-percent").textContent = Math.floor(100 * bar.value / bar.max) + "%";
-      el("package-counts").textContent = counts.filter(([, count]) => count > 0).map(([key, count]) => count.toLocaleString() + " " + key).join(" · ");
+      el("progress-label").textContent = "Processed " + display.number(completed) + " of " + display.number(progress.total);
+      el("progress-percent").textContent = display.percent(Math.floor(100 * bar.value / bar.max) / 100);
+      el("package-counts").textContent = counts.filter(([, count]) => count > 0).map(([key, count]) => display.number(count) + " " + key).join(" · ");
     } else {
       el("build-progress").removeAttribute("value");
       el("progress-label").textContent = known ? "No packages queued" : "Waiting for package counts";
@@ -582,7 +621,7 @@ function createBuildView(request, el, node) {
     const when = timeValue(build.next_run);
     const queued = [];
     if (build.retry_pending > 0) {
-      queued.push(build.retry_pending.toLocaleString() + (build.retry_pending === 1 ? " port queued for retry" : " ports queued for retry"));
+      queued.push("Ports queued for retry (" + display.number(build.retry_pending) + ")");
     }
     if (build.manual_pending) queued.push("Manual build queued");
     let next, detail = "";
@@ -591,8 +630,7 @@ function createBuildView(request, el, node) {
       next = "Retrying resume";
     } else if (opening) {
       // The worker sends the offset in effect at the opening, including across DST changes.
-      next = build.window_opens.slice(0, 16).replace("T", " ") + " UTC" +
-        (build.window_opens.endsWith("Z") ? "" : build.window_opens.slice(-6));
+      next = serverTime(build.window_opens, {dateStyle: "medium", timeStyle: "long", hourCycle: "h23"});
       detail = ["Server time", ...queued].join(" · ");
     } else if (queued.length) {
       next = active ? "After this run" : "Queued";
@@ -601,9 +639,9 @@ function createBuildView(request, el, node) {
       next = fullDate.format(when);
       detail = build.next_reason === "retry" ? "Scheduled retry" : "Scheduled run";
       const minutes = Math.ceil((when - Date.now()) / 60000);
-      if (minutes > 0) detail += " · in " + (minutes < 60 ? minutes + "m" : Math.floor(minutes / 60) + "h " + minutes % 60 + "m");
+      if (minutes > 0) detail += " · " + relativeTime(minutes * 60);
     } else if (active && build.next_delay_seconds > 0) {
-      next = delayLabel(build.next_delay_seconds) + " after this run";
+      next = buildDuration(build.next_delay_seconds, "long") + " after this run";
       detail = "Scheduled run";
     } else {
       next = active ? "After this run" : "No schedule available";
@@ -650,7 +688,7 @@ function createBuildView(request, el, node) {
     const label = node("span", "Phase");
     label.className = "job-phase-label";
     const measured = Number.isFinite(job.progress_percent);
-    phase.append(label, node("strong", (job.phase || "—") + (measured ? " · " + job.progress_percent + "%" : "")));
+    phase.append(label, node("strong", (job.phase || "—") + (measured ? " · " + display.percent(job.progress_percent / 100) : "")));
     if (measured) {
       const bar = document.createElement("progress");
       bar.setAttribute("aria-label", "Build tool progress for " + (job.package || job.origin));
@@ -668,8 +706,8 @@ function createBuildView(request, el, node) {
       metrics.append(group);
     }
     metric("Elapsed", buildDuration(job.elapsed_seconds), "Elapsed time since this package started, including pauses");
-    metric("CPU", Number.isFinite(job.cpu_percent) ? job.cpu_percent.toLocaleString(undefined, {maximumFractionDigits: 1}) + "%" : "—", "100% represents one CPU core");
-    metric("Memory", Number.isFinite(job.memory_bytes) ? (job.memory_bytes / 1048576).toLocaleString(undefined, {maximumFractionDigits: 1}) + " MiB" : "—", "Resident memory used by this builder’s processes");
+    metric("CPU", Number.isFinite(job.cpu_percent) ? display.percent(job.cpu_percent / 100) : "—", display.percent(1) + " represents one CPU core");
+    metric("Memory", Number.isFinite(job.memory_bytes) ? display.unit(job.memory_bytes / 1e6, "megabyte") : "—", "Resident memory used by this builder’s processes");
     item.append(pkg, phase, metrics);
     return item;
   }
@@ -732,9 +770,9 @@ function createBuildView(request, el, node) {
   // operator's timezone. The data table gives exact values for every column.
   function bucketLabel(date, short) {
     const options = interval === "month" ? {month: short ? "short" : "long", year: short ? "2-digit" : "numeric"} :
-      interval === "hour" ? {hour: "2-digit", hourCycle: "h23", ...(short ? {} : {year: "numeric", month: "short", day: "numeric"})} :
+      interval === "hour" ? {hour: "numeric", ...(short ? {} : {year: "numeric", month: "short", day: "numeric"})} :
       {month: "short", day: "numeric", ...(short ? {} : {year: "numeric"})};
-    const label = date.toLocaleString(undefined, {...options, timeZone: "UTC"});
+    const label = date.toLocaleString(display.locale, {...options, timeZone: "UTC"});
     return !short && interval === "week" ? "Week of " + label : label;
   }
 
@@ -746,12 +784,13 @@ function createBuildView(request, el, node) {
     const highest = Math.max(1, ...buckets.map(b => outcomes.reduce((n, k) => n + b[k], 0)));
     const step = 10 ** Math.floor(Math.log10(highest));
     const ceiling = Math.ceil(highest / step) * step;
-    el("history-count").textContent = total.toLocaleString();
-    el("history-range").textContent = (total === 1 ? "package built" : "packages built") + " in the last " + ranges[interval] + " (UTC)";
-    for (const outcome of outcomes) el("total-" + outcome).textContent = history.totals[outcome].toLocaleString();
-    el("chart-max").textContent = ceiling.toLocaleString();
-    el("chart-mid").textContent = ceiling % 2 === 0 ? (ceiling / 2).toLocaleString() : "";
-    el("history-plot").setAttribute("aria-label", total.toLocaleString() + " packages built and " + history.totals.failed.toLocaleString() + " failed in the last " + ranges[interval] + ", grouped by " + interval + " in UTC. Exact counts follow in the data table.");
+    const range = display.unit(buckets.length, interval, "long");
+    el("history-count").textContent = display.number(total);
+    el("history-range").textContent = "built in the last " + range + " (UTC)";
+    for (const outcome of outcomes) el("total-" + outcome).textContent = display.number(history.totals[outcome]);
+    el("chart-max").textContent = display.number(ceiling);
+    el("chart-mid").textContent = ceiling % 2 === 0 ? display.number(ceiling / 2) : "";
+    el("history-plot").setAttribute("aria-label", display.number(total) + " built and " + display.number(history.totals.failed) + " failed in the last " + range + ", grouped by " + interval + " in UTC. Exact counts follow in the data table.");
     const bars = document.createDocumentFragment(), rows = document.createDocumentFragment();
     const svg = tag => document.createElementNS("http://www.w3.org/2000/svg", tag);
     el("chart-bars").setAttribute("viewBox", "0 0 " + buckets.length * 10 + " " + ceiling);
@@ -760,7 +799,7 @@ function createBuildView(request, el, node) {
       const col = svg("g");
       col.setAttribute("transform", "translate(" + index * 10 + " 0)");
       const title = svg("title");
-      title.textContent = label + " UTC · " + outcomes.map(k => bucket[k] + " " + k).join(", ");
+      title.textContent = label + " UTC · " + outcomes.map(k => display.number(bucket[k]) + " " + k).join(" · ");
       const target = svg("rect");
       target.setAttribute("width", "10");
       target.setAttribute("height", ceiling);
@@ -773,7 +812,7 @@ function createBuildView(request, el, node) {
       let top = ceiling;
       for (const outcome of outcomes) {
         const count = bucket[outcome];
-        row.append(node("td", count.toLocaleString()));
+        row.append(node("td", display.number(count)));
         if (!count) continue;
         top -= count;
         const segment = svg("rect");
@@ -791,15 +830,15 @@ function createBuildView(request, el, node) {
     el("history-values").replaceChildren(rows);
     const recent = history.recent || [];
     const attempts = total + history.totals.failed;
-    const shown = recent.length.toLocaleString();
+    const shown = display.number(recent.length);
     el("history-recent-count").textContent = recent.length < attempts
-      ? "(latest " + shown + " of " + attempts.toLocaleString() + ")" : "(" + shown + ")";
+      ? "(latest " + shown + " of " + display.number(attempts) + ")" : "(" + shown + ")";
     const results = document.createDocumentFragment();
     for (const result of recent) {
       const row = document.createElement("tr");
       const name = node("th", result.package);
       name.scope = "row";
-      const time = node("time", result.finished.replace("T", " ").slice(0, 19));
+      const time = node("time", utcDate.format(new Date(result.finished)));
       time.dateTime = result.finished;
       const finished = document.createElement("td");
       finished.append(time);
@@ -875,49 +914,36 @@ function createBuildView(request, el, node) {
 function createInventoryView(request, el, node) {
   const pageSize = 25;
   const dialog = el("client-dialog");
-  const absoluteDate = new Intl.DateTimeFormat(undefined, {dateStyle: "full", timeStyle: "long"});
-  const collate = new Intl.Collator(undefined, {numeric: true});
+  const absoluteDate = new Intl.DateTimeFormat(display.locale, {dateStyle: "full", timeStyle: "long"});
   const views = {
-    packages: {columns: 8, unit: "entry", renderRow: packageRow, matches: packageMatches},
-    clients: {columns: 4, unit: "client", renderRow: clientRow, matches: (client, q) => matches(q, client.ip)},
-    "client-packages": {columns: 3, unit: "package", renderRow: detailRow, matches: detailMatches}
+    packages: {columns: 8, label: "Entries", renderRow: packageRow, matches: packageMatches},
+    clients: {columns: 4, label: "Clients", renderRow: clientRow, matches: (client, q) => matches(q, client.ip)},
+    "client-packages": {columns: 3, label: "Packages", renderRow: detailRow, matches: detailMatches}
   };
   let filter = "all", sortKey = "origin", ascending = true;
   let openIP, inflight, detailRequest = 0;
 
-  function quantity(n, unit) {
-    const plural = unit === "entry" ? "entries" : unit + "s";
-    return n.toLocaleString() + " " + (n === 1 ? unit : plural);
-  }
-
   function megabytes(bytes) {
     if (!Number.isFinite(bytes)) return "—";
-    if (bytes > 0 && bytes < 10000) return "<0.01";
-    return (bytes / 1e6).toLocaleString(undefined, {maximumFractionDigits: 2});
+    if (bytes > 0 && bytes < 10000) return "<" + display.unit(0.01, "megabyte");
+    return display.unit(bytes / 1e6, "megabyte");
   }
 
   function diskSize(bytes) {
     if (!Number.isFinite(bytes)) return "—";
-    const units = ["B", "kB", "MB", "GB", "TB", "PB", "EB"];
+    const units = ["byte", "kilobyte", "megabyte", "gigabyte", "terabyte", "petabyte"];
     let unit = 0;
     while (bytes >= 1000 && unit < units.length - 1) {
       bytes /= 1000;
       unit++;
     }
-    return bytes.toLocaleString(undefined, {maximumFractionDigits: 2}) + " " + units[unit];
+    return display.unit(bytes, units[unit]);
   }
 
   function seenTime(stamp) {
     if (!stamp) return "—";
     const date = new Date(stamp * 1000);
-    const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
-    let label = "Just now";
-    for (const [duration, unit] of [[86400, "day"], [3600, "hour"], [60, "minute"]]) {
-      if (seconds >= duration) {
-        label = quantity(Math.floor(seconds / duration), unit) + " ago";
-        break;
-      }
-    }
+    const label = relativeTime((date.getTime() - Date.now()) / 1000);
     const time = node("time", label);
     time.dateTime = date.toISOString();
     time.title = absoluteDate.format(date);
@@ -974,12 +1000,12 @@ function createInventoryView(request, el, node) {
     row.insertCell().append(seenTime(p.last_seen));
     row.insertCell().textContent = buildDuration(p.build_seconds);
     row.insertCell().textContent = megabytes(p.size);
-    row.insertCell().textContent = p.consumers?.toLocaleString() ?? "—";
+    row.insertCell().textContent = Number.isFinite(p.consumers) ? display.number(p.consumers) : "—";
   }
 
   function clientRow(row, client) {
     row.insertCell().textContent = client.ip;
-    row.insertCell().textContent = client.package_count.toLocaleString();
+    row.insertCell().textContent = display.number(client.package_count);
     row.insertCell().append(seenTime(client.last_seen));
     const button = node("button", "View packages");
     button.type = "button";
@@ -1009,7 +1035,7 @@ function createInventoryView(request, el, node) {
     if (!views.packages.records) return;
     const port = p => p.build_origin || p.origin || p.name || p.cache_key || "";
     views.packages.records.sort((a, b) => {
-      const byPort = collate.compare(port(a), port(b)) || collate.compare(a.name || "", b.name || "");
+      const byPort = display.collate.compare(port(a), port(b)) || display.collate.compare(a.name || "", b.name || "");
       if (sortKey === "origin") return ascending ? byPort : -byPort;
       const first = a[sortKey], second = b[sortKey];
       if (first == null || second == null) return Number(first == null) - Number(second == null) || byPort;
@@ -1031,10 +1057,10 @@ function createInventoryView(request, el, node) {
     const pages = Math.ceil(records.length / pageSize);
     view.page = Math.min(view.page, Math.max(0, pages - 1));
     const start = view.page * pageSize;
-    const summary = !view.records ? "Unavailable" : quantity(records.length, view.unit);
+    const summary = !view.records ? "Unavailable" : view.label + " (" + display.number(records.length) + ")";
     el(id + "-count").textContent = summary;
     el(id + "-pages").hidden = pages < 2;
-    el(id + "-page").textContent = "Page " + (view.page + 1) + " of " + pages;
+    el(id + "-page").textContent = "Page " + display.number(view.page + 1) + " of " + display.number(pages);
     el(id + "-previous").disabled = view.page === 0;
     el(id + "-next").disabled = view.page + 1 >= pages;
 
@@ -1104,9 +1130,9 @@ function createInventoryView(request, el, node) {
       view.catalogReady = data.catalog_ready;
       view.empty = data.catalog_ready && data.origins_ready ? "No tracked packages, local builds or cached archives yet." : "No packages in the available inventory.";
       el("inventory-origin-count").textContent = !data.origins_ready && !data.tracked_origins ? "—" :
-        (data.origins_ready ? "" : "≥") + data.tracked_origins.toLocaleString();
-      el("inventory-cache-count").textContent = data.cached_count.toLocaleString();
-      el("inventory-compiled-count").textContent = data.catalog_ready ? data.packages.filter(p => p.compiled).length.toLocaleString() : "—";
+        (data.origins_ready ? "" : "≥") + display.number(data.tracked_origins);
+      el("inventory-cache-count").textContent = display.number(data.cached_count);
+      el("inventory-compiled-count").textContent = data.catalog_ready ? display.number(data.packages.filter(p => p.compiled).length) : "—";
       el("inventory-compiled-size").textContent = diskSize(data.compiled_bytes);
       el("inventory-cache-size").textContent = diskSize(data.cached_bytes);
       el("inventory-cache-limit").textContent = Number.isFinite(data.cache_limit) ? "of " + diskSize(data.cache_limit) : "";
@@ -1124,7 +1150,7 @@ function createInventoryView(request, el, node) {
     const view = views.clients;
     view.error = records ? "" : "Could not load repository clients.";
     if (records) {
-      view.records = records.sort((a, b) => b.last_seen - a.last_seen || collate.compare(a.ip, b.ip));
+      view.records = records.sort((a, b) => b.last_seen - a.last_seen || display.collate.compare(a.ip, b.ip));
       view.empty = "Clients appear after a repository request or an installed-package report.";
     }
     el("clients-note").textContent = !records && view.records ? "Could not refresh clients. Showing the last result." : "";
@@ -1528,7 +1554,8 @@ function initManagement() {
       fillSettings(result.settings, {web_url: new URL(".", document.baseURI).href, ...result.defaults});
       settingsRevision = result.revision;
       settingsConflict = false;
-      el("server-clock").textContent = result.server_time ? " (" + result.server_time + " when loaded)" : "";
+      const clock = serverTime(result.server_time_at, {hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZoneName: "shortOffset"}) || result.server_time;
+      el("server-clock").textContent = clock ? " (" + clock + " when loaded)" : "";
       settingsMessage(result.active === false ? "Settings saved. Poudrine has yet to apply them. Check the service log if this persists." : saved ? "Settings saved." : "");
     } catch (error) {
       const conflict = update && (error.status === 409 || error.status === 412);

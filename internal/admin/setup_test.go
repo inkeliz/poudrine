@@ -16,12 +16,36 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/inkeliz/poudrine/internal/catalog"
 	"github.com/inkeliz/poudrine/internal/config"
 	"github.com/inkeliz/poudrine/internal/public"
 	"github.com/inkeliz/poudrine/internal/testutil"
 )
+
+func TestPageLocale(t *testing.T) {
+	a := testAdmin(t)
+	updated := time.Date(2026, 11, 22, 12, 34, 56, 0, time.UTC)
+	a.cfg.Stats = func() catalog.CatalogStats {
+		return catalog.CatalogStats{Packages: 1234567, Ahead: 1234, Updated: &updated}
+	}
+	for _, path := range []string{"/", "/admin"} {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Header.Set("Accept-Language", "en;q=0.1, hi-IN")
+		w := adminResponse(t, a, r, http.StatusOK)
+		if w.Header().Get("Content-Language") != "hi-IN" || w.Header().Get("Vary") != "Accept-Language" || !strings.Contains(w.Body.String(), `data-locale="hi-IN"`) {
+			t.Fatalf("%s did not expose the requested format locale", path)
+		}
+		if path == "/" {
+			for _, want := range []string{">12,34,567</strong>", ">1,234</strong>", `datetime="2026-11-22T12:34:56Z"`} {
+				if !strings.Contains(w.Body.String(), want) {
+					t.Errorf("%s missing %q", path, want)
+				}
+			}
+		}
+	}
+}
 
 func TestOfflineClientSetup(t *testing.T) {
 	a := testAdmin(t)

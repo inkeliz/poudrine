@@ -25,6 +25,8 @@ import (
 	"github.com/inkeliz/poudrine/internal/packageinfo"
 	"github.com/inkeliz/poudrine/internal/requestauth"
 	"github.com/inkeliz/poudrine/internal/routes"
+	"github.com/inkeliz/poudrine/internal/weblocale"
+	"golang.org/x/text/message"
 )
 
 const (
@@ -36,7 +38,7 @@ var reportToken = regexp.MustCompile(`^[-A-Za-z0-9_+.,:~]+$`)
 
 var reportOrigin = regexp.MustCompile(`^[-A-Za-z0-9_+./:@~]+$`)
 
-var errReportRows = errors.New("inventory exceeds 65536 packages")
+var errReportRows = errors.New("too many inventory entries")
 
 var reportOriginProtection = http.NewCrossOriginProtection()
 
@@ -46,7 +48,7 @@ type inventoryReceipt struct {
 	Unmatched int `json:"unmatched"`
 }
 
-func parseReport(body io.Reader, catalog *catalogpkg.Snapshot) (map[string]database.InstalledPackage, inventoryReceipt, error) {
+func parseReport(body io.Reader, catalog *catalogpkg.Snapshot, printer *message.Printer) (map[string]database.InstalledPackage, inventoryReceipt, error) {
 	packages := make(map[string]database.InstalledPackage)
 	var result inventoryReceipt
 	scanner := bufio.NewScanner(body)
@@ -64,16 +66,16 @@ func parseReport(body io.Reader, catalog *catalogpkg.Snapshot) (map[string]datab
 		}
 		fields := strings.FieldsFunc(scanner.Text(), func(r rune) bool { return r == ' ' || r == '\t' })
 		if len(fields) != 3 {
-			return nil, result, fmt.Errorf("line %d: expected package name, installed version and origin", line)
+			return nil, result, errors.New(printer.Sprintf("line %d: expected package name, installed version and origin", line))
 		}
 		name, version, origin := fields[0], fields[1], fields[2]
 		if len(name) > 255 || len(version) > 255 || len(origin) > 255 ||
 			!reportToken.MatchString(name) || !reportToken.MatchString(version) || !reportOrigin.MatchString(origin) {
-			return nil, result, fmt.Errorf("line %d: invalid package name, version or origin", line)
+			return nil, result, errors.New(printer.Sprintf("line %d: invalid package name, version or origin", line))
 		}
 		if old, ok := packages[name]; ok {
 			if old.Version != version || old.Origin != origin {
-				return nil, result, fmt.Errorf("line %d: conflicting entries for the same package", line)
+				return nil, result, errors.New(printer.Sprintf("line %d: conflicting entries for the same package", line))
 			}
 			continue
 		}
@@ -117,15 +119,19 @@ func (s *Repository) reportInventory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "a signed Ed25519 inventory report is required", http.StatusUnauthorized)
 		return
 	}
+	printer := message.NewPrinter(weblocale.ForRequest(r))
+	reportTooLarge := func() {
+		http.Error(w, printer.Sprintf("inventory exceeds %d MiB", maxReportBytes>>20), http.StatusRequestEntityTooLarge)
+	}
 	if r.ContentLength > maxReportBytes {
-		http.Error(w, "inventory exceeds 8 MiB", http.StatusRequestEntityTooLarge)
+		reportTooLarge()
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxReportBytes))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			http.Error(w, "inventory exceeds 8 MiB", http.StatusRequestEntityTooLarge)
+			reportTooLarge()
 		} else {
 			http.Error(w, "cannot read the inventory report", http.StatusBadRequest)
 		}
@@ -142,13 +148,13 @@ func (s *Repository) reportInventory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "repository catalog is initializing; retry the report when it is ready", http.StatusServiceUnavailable)
 		return
 	}
-	packages, result, err := parseReport(bytes.NewReader(body), snapshot)
+	packages, result, err := parseReport(bytes.NewReader(body), snapshot, printer)
 	if err != nil {
-		code := http.StatusBadRequest
 		if errors.Is(err, errReportRows) {
-			code = http.StatusRequestEntityTooLarge
+			http.Error(w, printer.Sprintf("inventory exceeds %d packages", maxReportLines), http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
-		http.Error(w, err.Error(), code)
 		return
 	}
 	if err := s.Store.ReplaceReport(r.Context(), s.clientIP(r), requestauth.ReportProof{Key: key, Nonce: nonce, Stamp: stamp}, packages); err != nil {

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-locale="{{.Locale.Tag}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -122,12 +122,12 @@
       <dl class="metrics">
         <div class="metric">
           <dt>Available packages</dt>
-          <dd class="count">{{if .Available}}{{.Packages}}{{else}}—{{end}}</dd>
+          <dd class="count" lang="{{.Locale.Tag}}">{{if .Available}}{{.Locale.Sprint .Packages}}{{else}}—{{end}}</dd>
           <dd class="detail">All packages in the published catalog.</dd>
         </div>
         <div class="metric ahead">
           <dt>Ahead of FreeBSD</dt>
-          <dd class="count">{{if .Available}}{{.Ahead}}{{else}}—{{end}}</dd>
+          <dd class="count" lang="{{.Locale.Tag}}">{{if .Available}}{{.Locale.Sprint .Ahead}}{{else}}—{{end}}</dd>
           <dd class="detail">Local builds newer than their FreeBSD counterparts.</dd>
         </div>
       </dl>

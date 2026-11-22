@@ -81,11 +81,15 @@ func TestWebSettingsPrefillPreservesAutomaticConfiguration(t *testing.T) {
 	req := testutil.SignedRequest(t, key, routes.ReadConfig.Method, routes.ReadConfig.Path, []byte("{}"), time.Now())
 	reply := adminResponse(t, a, req, http.StatusOK)
 	var out struct {
-		Settings configpkg.Configuration
-		Defaults map[string]string
+		Settings     configpkg.Configuration
+		Defaults     map[string]string
+		ServerTimeAt time.Time `json:"server_time_at"`
 	}
 	if err := json.Unmarshal(reply.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
+	}
+	if out.ServerTimeAt.IsZero() {
+		t.Fatal("working hours need the server clock and UTC offset")
 	}
 	want := map[string]string{
 		"repo_url": "http://[::1]:49123", "push_contact": "postmaster@[IPv6:::1]",

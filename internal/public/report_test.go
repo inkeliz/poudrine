@@ -93,6 +93,14 @@ func TestInstalledPackageReport(t *testing.T) {
 
 func TestReportBoundaries(t *testing.T) {
 	repo, _ := inventoryReportFixture(t)
+	report := strings.Repeat("pkg 1 local/pkg\n", 1233) + "invalid\n"
+	request := newSignedReport(t, testutil.ReportKey(), routes.ReportInventory.Path, report, time.Now())
+	request.Header.Set("Accept-Language", "de-DE")
+	badLine := httptest.NewRecorder()
+	repo.ServeHTTP(badLine, request)
+	if badLine.Code != http.StatusBadRequest || !strings.Contains(badLine.Body.String(), "1.234") {
+		t.Fatalf("expected a localized report line number, got %d %s", badLine.Code, badLine.Body.String())
+	}
 	for _, tc := range []struct {
 		method, contentType, origin string
 		want                        int

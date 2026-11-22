@@ -170,11 +170,17 @@ func TestAdminWebPushDelivery(t *testing.T) {
 	tampered := testutil.SignedRequest(t, key, "POST", path, body, time.Now())
 	tampered.Body = io.NopCloser(strings.NewReader("{}"))
 	adminResponse(t, a, tampered, 401)
-	adminResponse(t, a, testutil.SignedRequest(t, key, "POST", path, body, time.Now()), 204)
+	subscribe := testutil.SignedRequest(t, key, "POST", path, body, time.Now())
+	subscribe.Header.Set("Accept-Language", "en;q=0.2, de-CH")
+	adminResponse(t, a, subscribe, 204)
 	now := time.Now()
 	record := database.BuildRecord{Package: "test-2", Started: now.Add(-time.Minute), Finished: now, Outcome: "succeeded", Origin: "devel/test", ABI: "freebsd:15:amd64"}
 	if err := a.cfg.DB.RecordBuilds(t.Context(), []database.BuildRecord{record}); err != nil {
 		t.Fatal(err)
+	}
+	batch, err := a.cfg.DB.PendingBuildPush(t.Context(), now)
+	if err != nil || len(batch) != 1 || batch[0].Language != "de-CH" {
+		t.Fatalf("queued notification language: %+v, %v", batch, err)
 	}
 	snapshot := &catalog.Snapshot{Displaced: map[string]packageinfo.Package{"test": {Name: "test", Origin: "devel/test", Version: "1", ABI: "freebsd:15:amd64"}}}
 	if err := a.deliverBuildPush(t.Context(), snapshot); err != nil {

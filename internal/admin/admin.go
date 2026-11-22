@@ -26,6 +26,7 @@ import (
 	"github.com/inkeliz/poudrine/internal/requestauth"
 	"github.com/inkeliz/poudrine/internal/routes"
 	poudrineweb "github.com/inkeliz/poudrine/internal/web/poudrine"
+	"github.com/inkeliz/poudrine/internal/weblocale"
 )
 
 type Config struct {
@@ -187,7 +188,10 @@ func (a *Admin) management(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := managementPage.Execute(w, struct{ Enrolled bool }{len(key) != 0}); err != nil {
+	if err := managementPage.Execute(w, struct {
+		Locale   weblocale.Page
+		Enrolled bool
+	}{weblocale.ForPage(w, r), len(key) != 0}); err != nil {
 		log.Printf("management page: %v", err)
 	}
 }

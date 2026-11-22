@@ -3,31 +3,20 @@ package status
 import (
 	"bytes"
 	"html/template"
-	"strconv"
 
 	"github.com/inkeliz/poudrine/internal/statusproto"
 	statusweb "github.com/inkeliz/poudrine/internal/web/poudrine-status"
+	"github.com/inkeliz/poudrine/internal/weblocale"
 )
 
 var statusPage = template.Must(template.New("status").Parse(statusweb.HTML))
 
-func displayCount(n int64) string {
-	digits := strconv.FormatInt(n, 10)
-	for i := len(digits) - 3; i > 0; i -= 3 {
-		digits = digits[:i] + "," + digits[i:]
-	}
-	return digits
-}
-
-func renderStatusPage(s statusproto.Counts, available bool) ([]byte, error) {
+func renderStatusPage(locale weblocale.Page, s statusproto.Counts, available bool) ([]byte, error) {
 	data := struct {
-		Available       bool
-		Packages, Ahead string
-	}{Available: available}
-	if available {
-		data.Packages = displayCount(s.Packages)
-		data.Ahead = displayCount(s.Ahead)
-	}
+		Locale    weblocale.Page
+		Available bool
+		statusproto.Counts
+	}{locale, available, s}
 	var buf bytes.Buffer
 	err := statusPage.Execute(&buf, data)
 	return buf.Bytes(), err

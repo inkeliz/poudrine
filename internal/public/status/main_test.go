@@ -18,6 +18,39 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestStatusPageLocale(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "status.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	const snapshot = `{"packages":1234567,"ahead":1234}`
+	if _, err := file.WriteString(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	h := &statusHandler{fd: int(file.Fd())}
+	for _, tt := range []struct{ lang, number string }{
+		{"en", "1,234,567"},
+		{"de-DE", "1.234.567"},
+		{"hi-IN", "12,34,567"},
+		{"en-u-nu-arab", "١٬٢٣٤٬٥٦٧"},
+	} {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("Accept-Language", tt.lang)
+		page := httptest.NewRecorder()
+		h.ServeHTTP(page, r)
+		if page.Code != http.StatusOK || page.Header().Get("Vary") != "Accept-Language" || page.Header().Get("Content-Language") != tt.lang || !strings.Contains(page.Body.String(), ">"+tt.number+"</dd>") {
+			t.Errorf("%s: missing locale metadata or localized number %s", tt.lang, tt.number)
+		}
+		r.URL.Path = "/status.json"
+		data := httptest.NewRecorder()
+		h.ServeHTTP(data, r)
+		if data.Body.String() != snapshot+"\n" || data.Header().Get("Vary") != "" {
+			t.Errorf("%s: unexpected JSON response %s", tt.lang, data.Body)
+		}
+	}
+}
+
 func TestStatusReplies(t *testing.T) {
 	file, err := os.CreateTemp(t.TempDir(), "status.json")
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/inkeliz/poudrine/internal/statusproto"
+	"github.com/inkeliz/poudrine/internal/weblocale"
 	"golang.org/x/net/netutil"
 	"golang.org/x/sys/unix"
 )
@@ -56,7 +57,7 @@ func (h *statusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path != "/status.json":
 		var err error
-		body, err = renderStatusPage(s, available)
+		body, err = renderStatusPage(weblocale.ForPage(w, r), s, available)
 		if err != nil {
 			http.Error(w, "Cannot render statistics", http.StatusInternalServerError)
 			return

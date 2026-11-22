@@ -56,6 +56,7 @@ type Reply struct {
 	Settings       *config.Configuration   `json:",omitempty"`
 	WorkerPending  bool                    `json:"HoursPending,omitempty"` // Keep the wire name during an in-place service upgrade.
 	ServerTime     string                  `json:",omitempty"`
+	ServerTimeAt   time.Time               `json:",omitzero"`
 	Revision       string                  `json:",omitempty"`
 	PublicKey      []byte                  `json:",omitempty"`
 	Status         int
@@ -363,7 +364,8 @@ func (a *Authority) Handle(ctx context.Context, m Message) Reply {
 		return Reply{Status: 503, Error: "Cannot load service configuration"}
 	}
 	if m.Method == MethodQuery {
-		reply := Reply{Settings: &current, Revision: rev, Status: 200, ServerTime: time.Now().Format("15:04 MST")}
+		now := time.Now()
+		reply := Reply{Settings: &current, Revision: rev, Status: 200, ServerTime: now.Format("15:04 MST"), ServerTimeAt: now}
 		if a.Builder != nil {
 			hours, _ := config.ParseWorkingHours(current.WorkingHours) // loadConfiguration validated the schedule.
 			reply.WorkerPending = a.Builder.CurrentWorkingHours() != hours || !a.Builder.Cfg.PackageOverlays.Equal(current.PackageOverlays)

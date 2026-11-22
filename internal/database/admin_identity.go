@@ -27,8 +27,24 @@ CREATE INDEX IF NOT EXISTS admin_nonce_expiry ON admin_nonces(expires);
 `
 
 func (s DB) PrepareAdmin() error {
-	_, err := s.DB.Exec(BuildHistorySchema + adminSchema)
-	return err
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(BuildHistorySchema + adminSchema); err != nil {
+		return err
+	}
+	var hasLanguage bool
+	if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM pragma_table_info('push_subscriptions') WHERE name='language')").Scan(&hasLanguage); err != nil {
+		return err
+	}
+	if !hasLanguage {
+		if _, err := tx.Exec("ALTER TABLE push_subscriptions ADD COLUMN language TEXT NOT NULL DEFAULT 'en'"); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s DB) PinAdmin(key ed25519.PublicKey) error {

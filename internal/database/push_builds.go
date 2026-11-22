@@ -22,6 +22,7 @@ END;`
 
 type PushBuild struct {
 	Endpoint         string `json:"-"`
+	Language         string `json:"-"`
 	Started          int64  `json:"-"`
 	Pkg, Origin, ABI string `json:"-"`
 }
@@ -32,8 +33,9 @@ func (s DB) ExpireBuildPush(ctx context.Context, now time.Time) error {
 }
 
 func (s DB) PendingBuildPush(ctx context.Context, now time.Time) ([]PushBuild, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT endpoint,started_ns,package,origin,abi
-	 FROM push_build_queue WHERE next_try <= ? ORDER BY next_try,finished_ns,package LIMIT 64`, now.Unix())
+	rows, err := s.DB.QueryContext(ctx, `SELECT endpoint,started_ns,package,origin,abi,language
+	 FROM push_build_queue JOIN push_subscriptions USING(endpoint)
+	 WHERE next_try <= ? ORDER BY next_try,finished_ns,package LIMIT 64`, now.Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +43,7 @@ func (s DB) PendingBuildPush(ctx context.Context, now time.Time) ([]PushBuild, e
 	var batch []PushBuild
 	for rows.Next() {
 		var p PushBuild
-		err = rows.Scan(&p.Endpoint, &p.Started, &p.Pkg, &p.Origin, &p.ABI)
+		err = rows.Scan(&p.Endpoint, &p.Started, &p.Pkg, &p.Origin, &p.ABI, &p.Language)
 		if err != nil {
 			return nil, err
 		}
