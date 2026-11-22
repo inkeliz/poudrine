@@ -12,6 +12,13 @@ import (
 const Query = "QUERY"
 const ClockSkewSeconds = 300
 
+// ReportProof carries the verified signer and freshness fields for inventory replay checks.
+type ReportProof struct {
+	Key   ed25519.PublicKey `json:"-"`
+	Nonce []byte            `json:"-"`
+	Stamp int64             `json:"-"`
+}
+
 // PublicKey decodes the raw Ed25519 key carried by a self-signed request.
 func PublicKey(text string) ed25519.PublicKey {
 	if len(text) != base64.RawURLEncoding.EncodedLen(ed25519.PublicKeySize) {

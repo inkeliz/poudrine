@@ -1,0 +1,145 @@
+package database
+
+import (
+	"context"
+	"database/sql"
+)
+
+type clientSummary struct {
+	IP           string `json:"ip"`
+	FirstSeen    int64  `json:"first_seen"`
+	LastSeen     int64  `json:"last_seen"`
+	PackageCount int    `json:"package_count"`
+}
+
+type ClientPackageDetail struct {
+	Name             string `json:"name"`
+	Origin           string `json:"origin"`
+	RequestedVersion string `json:"requested_version,omitempty"`
+	ReportedVersion  string `json:"reported_version,omitempty"`
+}
+
+type ClientPackageList struct {
+	clientSummary
+	ReportedAt     int64                 `json:"reported_at,omitempty"`
+	PackageDetails []ClientPackageDetail `json:"package_details"`
+}
+
+func (s DB) ClientSummaries(ctx context.Context) ([]clientSummary, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT c.ip,c.first_seen,c.last_seen,(
+ SELECT count(*) FROM (
+   SELECT name FROM package_requests WHERE ip=c.ip
+   UNION SELECT name FROM client_report_packages WHERE ip=c.ip
+ )
+)
+FROM clients c ORDER BY c.last_seen DESC,c.ip`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []clientSummary{}
+	for rows.Next() {
+		var client clientSummary
+		if err := rows.Scan(&client.IP, &client.FirstSeen, &client.LastSeen, &client.PackageCount); err != nil {
+			return nil, err
+		}
+		out = append(out, client)
+	}
+	return out, rows.Err()
+}
+
+func (s DB) ClientPackages(ctx context.Context, ip string) (ClientPackageList, error) {
+	out := ClientPackageList{PackageDetails: []ClientPackageDetail{}}
+	rows, err := s.DB.QueryContext(ctx, `
+WITH names AS (
+ SELECT name FROM package_requests WHERE ip=?1
+ UNION SELECT name FROM client_report_packages WHERE ip=?1
+)
+SELECT c.ip,c.first_seen,c.last_seen,coalesce(r.reported_at,0),n.name,
+ coalesce(t.origin,p.origin,''),coalesce(q.version,''),coalesce(p.version,'')
+FROM clients c
+LEFT JOIN client_reports r ON r.ip=c.ip
+LEFT JOIN names n ON true
+LEFT JOIN package_requests q ON q.ip=c.ip AND q.name=n.name
+LEFT JOIN tracked_packages t ON t.name=q.name
+LEFT JOIN client_report_packages p ON p.ip=c.ip AND p.name=n.name
+WHERE c.ip=?1 ORDER BY n.name`, ip)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p ClientPackageDetail
+		var name sql.NullString
+		if err := rows.Scan(&out.IP, &out.FirstSeen, &out.LastSeen, &out.ReportedAt, &name, &p.Origin, &p.RequestedVersion, &p.ReportedVersion); err != nil {
+			return out, err
+		}
+		if name.Valid {
+			p.Name = name.String
+			out.PackageDetails = append(out.PackageDetails, p)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	if out.IP == "" {
+		return out, sql.ErrNoRows
+	}
+	out.PackageCount = len(out.PackageDetails)
+	return out, nil
+}
+
+type ClientRecord struct {
+	IP               string   `json:"ip"`
+	FirstSeen        int64    `json:"first_seen"`
+	LastSeen         int64    `json:"last_seen"`
+	Packages         []string `json:"packages"`
+	ReportedPackages []string `json:"reported_packages"`
+	ReportedAt       int64    `json:"reported_at,omitempty"`
+}
+
+func (s DB) Clients(ctx context.Context) (any, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT c.ip,c.first_seen,c.last_seen,coalesce(r.reported_at,0),p.name,p.version,coalesce(p.reported,0)
+FROM clients c
+LEFT JOIN client_reports r ON c.ip=r.ip
+LEFT JOIN (
+ SELECT ip,name,version,0 AS reported FROM package_requests
+ UNION ALL SELECT ip,name,version,1 FROM client_report_packages
+) p ON c.ip=p.ip
+ORDER BY c.ip,p.reported,p.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ClientRecord{}
+	for rows.Next() {
+		var c ClientRecord
+		var name, version sql.NullString
+		var reported bool
+		if err := rows.Scan(&c.IP, &c.FirstSeen, &c.LastSeen, &c.ReportedAt, &name, &version, &reported); err != nil {
+			return nil, err
+		}
+		if len(out) == 0 || out[len(out)-1].IP != c.IP {
+			c.Packages = []string{}
+			c.ReportedPackages = []string{}
+			out = append(out, c)
+		}
+		if name.Valid {
+			i := len(out) - 1
+			label := name.String + "-" + version.String
+			if reported {
+				out[i].ReportedPackages = append(out[i].ReportedPackages, label)
+			} else {
+				out[i].Packages = append(out[i].Packages, label)
+			}
+		}
+	}
+	return out, rows.Err()
+}
+
+const clientsSchema = `CREATE TABLE IF NOT EXISTS clients (
+ ip TEXT PRIMARY KEY, first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL
+);
+`

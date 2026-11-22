@@ -10,6 +10,29 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    name: Test on FreeBSD/amd64
+    if: github.event_name != 'push' || !github.event.deleted
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
+        with:
+          release: '15.1'
+          copyback: false
+          prepare: pkg install -y go git poudriere
+          run: |
+            set -eu
+            pw useradd -n tester -m -s /bin/sh
+            chown -R tester .
+            su tester -c 'make test'
+            su tester -c 'CGO_ENABLED=0 go build -o /tmp/poudrine-rc-test ./cmd/poudrine'
+            su tester -c 'CGO_ENABLED=0 go test -c -o /tmp/poudrine-builder.test ./internal/builder'
+            cd internal/builder
+            POUDRINE_RC_TEST_BIN=/tmp/poudrine-rc-test /tmp/poudrine-builder.test -test.run '^TestServiceRestartPreservesBuild$' -test.v -test.timeout=3m
+
   build:
     name: Build FreeBSD/amd64
     if: github.event_name != 'push' || !github.event.deleted
@@ -45,7 +68,7 @@ jobs:
   release:
     name: Publish GitHub Release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [test, build]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

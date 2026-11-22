@@ -130,7 +130,7 @@ poudrine-v2\n<METHOD>\n<PATH>\n<UNIX_SECONDS>\n<NONCE>\n
 | `X-Poudrine-Time` | Decimal Unix time in seconds, within five minutes of the server clock. |
 | `X-Poudrine-Nonce` | Fresh 16-byte random value, unpadded base64url. Reuse of an accepted nonce returns HTTP 409. |
 | `X-Poudrine-Signature` | The Ed25519 signature, unpadded base64url. |
-| `X-Poudrine-Key` | Raw Ed25519 public key, unpadded base64url. Include it for initial enrollment, client inventory reports and the public statistics API. Management looks up its enrolled key for subsequent requests. |
+| `X-Poudrine-Key` | Raw Ed25519 public key, unpadded base64url. Include it for initial enrollment and client inventory reports. Management looks up its enrolled key for subsequent requests. |
 
 | Request | Example signed body |
 | --- | --- |
@@ -151,5 +151,5 @@ Use the exact `started` value returned by results or history to select a run. Th
 
 ### Optional public status page
 
-To publish just the package count and the number ahead of FreeBSD, run `sysrc poudrine_status_enable=YES` and `service poudrine_status start` as root. The separate service listens on `[::]:8282` by default and serves public HTML at `/`. For JSON, send `QUERY /status.json` with body `{}` signed by your own Ed25519 key. Any caller can read the public counts this way. Set `poudrine_status_listen` in `rc.conf` to choose another address.
+To publish just the package count and the number ahead of FreeBSD, run `sysrc poudrine_status_enable=YES` and `service poudrine_status start` as root. The separate service listens on `[::]:8282` by default and serves public HTML at `/`. For JSON, use `GET /status.json`; `HEAD` returns the same headers without a body. Both the HTML page and JSON endpoint are public and require no keys, signatures or request body. Set `poudrine_status_listen` in `rc.conf` to choose another address.
 

@@ -4,10 +4,13 @@ TAR ?= tar
 DESTDIR ?=
 LOCALBASE = /usr/local
 release_files = poudrine poudrine-status rc.d examples/poudrine.json Makefile README.md
-source_files = *.go go.mod go.sum cmd internal web rc.d examples Makefile README.md
+source_files = *.go go.mod go.sum cmd internal rc.d examples Makefile README.md
 
-.PHONY: all build install install-built dist
+.PHONY: all test build install install-built dist
 all: build
+
+test:
+	CGO_ENABLED=0 ${GO} test ./...
 
 build:
 	CGO_ENABLED=0 GOOS=freebsd ${GO} build -trimpath -o poudrine ./cmd/poudrine

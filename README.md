@@ -188,4 +188,4 @@ Read the [security guide](docs/security.md) for key recovery, client identity an
 
 ## Development
 
-Run `CGO_ENABLED=0 go test ./...` and `make build`. See the [development guide](docs/development.md) for local setup, FreeBSD integration tests and releases.
+Run `make test` and `make build` on FreeBSD. See the [development guide](docs/development.md) for local setup, FreeBSD integration tests and releases.
