@@ -166,12 +166,25 @@ async function readBuildEvents(response, onBuild) {
   } finally { reader.releaseLock(); }
 }
 
-function createBuildIssues(request, el, node) {
-  const panel = el("build-issues"), selector = el("issue-run"), list = el("issue-list");
-  const status = el("issue-status"), feedback = el("issue-feedback"), retryAll = el("issue-retry-all");
+function createBuildResults(request, el, node) {
+  // Worker timestamps can have a UTC offset. Keep nanoseconds when matching
+  // them to Poudriere's UTC run names, even though Date displays milliseconds.
+  function runInstant(started) {
+    if (!started || started.startsWith("0001-01-01")) return "";
+    const seconds = new Date(started).toISOString().split(".")[0];
+    const fraction = started.match(/\.(\d+)/)?.[1] || "";
+    return seconds + "." + fraction.padEnd(9, "0");
+  }
+
+  const panel = el("build-results"), selector = el("result-run"), list = el("result-list");
+  const filter = el("result-filter"), more = el("result-more");
+  const status = el("result-status"), feedback = el("result-feedback"), retryAll = el("result-retry-all");
   const dialog = el("package-log-dialog"), output = el("package-log-output"), earlier = el("package-log-earlier");
   const runDate = new Intl.DateTimeFormat(undefined, {dateStyle: "medium", timeStyle: "long", hourCycle: "h23"});
-  let view, selected = "", listVersion = 0, focusPackage, worker, submitting = false;
+  let view, selected = "", listVersion = 0, focusPackage, worker, submitting = false, retryVersion = 0;
+  let entries = [], visible = [], shown = 0;
+  const outcomes = {succeeded: "Built", failed: "Failed", skipped: "Skipped"};
+  const pageSize = 50;
   const latest = el("package-log-latest");
   let logArgs, logStart, logVersion = 0;
 
@@ -183,6 +196,7 @@ function createBuildIssues(request, el, node) {
   async function retry(started, pkg) {
     if (submitting || !worker?.can_force) return;
     submitting = true;
+    const version = retryVersion;
     retryControls();
     const target = pkg || "all affected packages";
     feedback.textContent = "Queuing " + target + "…";
@@ -190,10 +204,11 @@ function createBuildIssues(request, el, node) {
       const args = pkg ? {started, package: pkg} : {started};
       const reply = await request("/api/admin/build/retry", "POST", args);
       if (!reply.queued) throw new Error("The worker did not accept the retry.");
+      if (version !== retryVersion || view?.started !== started || !panel.open) return;
       feedback.textContent = reply.already_queued ? "The pending build includes " + target + "." : "Retry queued for " + target + ".";
       if (worker?.window_opens) feedback.textContent += " The worker will resume during working hours.";
     } catch (error) {
-      feedback.textContent = "Could not confirm the retry. " + error.message;
+      if (version === retryVersion && view?.started === started && panel.open) feedback.textContent = "Could not confirm the retry. " + error.message;
     } finally {
       submitting = false;
       retryControls();
@@ -227,14 +242,14 @@ function createBuildIssues(request, el, node) {
     }
   }
 
-  function showLog(started, issue, phase) {
-    logArgs = {started, package: issue.package};
+  function showLog(started, pkg, phase) {
+    logArgs = {started, package: pkg.package};
     logStart = undefined;
     output.replaceChildren();
     earlier.hidden = true;
     latest.disabled = earlier.disabled = false;
-    el("package-log-title").textContent = issue.package;
-    el("package-log-info").textContent = [issue.origin, phase, runDate.format(new Date(started))].filter(Boolean).join(" · ");
+    el("package-log-title").textContent = pkg.package;
+    el("package-log-info").textContent = [pkg.origin, phase, runDate.format(new Date(started))].filter(Boolean).join(" · ");
     dialog.showModal();
     loadLog();
   }
@@ -255,29 +270,43 @@ function createBuildIssues(request, el, node) {
     return button;
   }
 
-  function issueRow(started, issue, children, failed) {
+  function resultRow({pkg, outcome, children, blockers}) {
+    const started = view.started;
     const item = document.createElement("li");
     item.tabIndex = -1;
-    item.dataset.package = issue.package;
+    item.dataset.package = pkg.package;
     const row = document.createElement("div"), name = document.createElement("div"), actions = document.createElement("div");
-    row.className = "issue-row";
-    name.className = "issue-name";
-    name.append(node("strong", issue.origin), node("small", issue.package));
-    const reason = node("p", failed ? [issue.phase ? "Failed during " + issue.phase : "Build failed", issue.reason].filter(Boolean).join(" · ") :
-      "Skipped · blocked by " + (issue.blocked_by || "an unrecorded dependency"));
-    reason.className = "issue-reason";
-    name.append(reason);
-    actions.className = "issue-actions";
-    if (failed) actions.append(makeAction("View log", () => showLog(started, issue, issue.phase ? "Failed during " + issue.phase : "Failed")));
-    const button = makeAction(children.length ? "Retry with dependents" : "Retry package", () => retry(started, issue.package));
-    button.dataset.retry = "";
-    actions.append(button);
+    row.className = "result-row";
+    name.className = "result-name";
+    const label = node("span", outcomes[outcome]);
+    label.className = "result-outcome";
+    label.dataset.outcome = outcome;
+    name.append(label, node("strong", pkg.origin), node("small", pkg.package));
+    const detail = outcome === "failed" ? [pkg.phase && "Phase " + pkg.phase, pkg.reason].filter(Boolean).join(" · ") :
+      outcome === "skipped" ? (blockers.length ? "Blocked by " + blockers.join(", ") : "") :
+      Number.isFinite(pkg.build_seconds) ? "Built in " + buildDuration(pkg.build_seconds) : "";
+    if (detail) {
+      const reason = node("p", detail);
+      reason.className = "result-reason";
+      name.append(reason);
+    }
+    actions.className = "result-actions";
+    if (outcome !== "skipped") {
+      const log = makeAction("View log", () => showLog(started, pkg, [outcomes[outcome], pkg.phase].filter(Boolean).join(" · ")));
+      log.setAttribute("aria-label", "View build log for " + pkg.package);
+      actions.append(log);
+    }
+    if (outcome !== "succeeded") {
+      const button = makeAction(children?.length ? "Retry with dependents" : "Retry package", () => retry(started, pkg.package));
+      button.dataset.retry = "";
+      button.disabled = submitting || !worker?.can_force;
+      actions.append(button);
+    }
     row.append(name, actions);
     item.append(row);
-    if (children.length) {
+    if (children?.length) {
       const deps = document.createElement("details"), packages = document.createElement("ul");
-      deps.className = "issue-deps";
-      deps.open = children.length <= 3;
+      deps.className = "result-deps";
       deps.append(node("summary", children.length.toLocaleString() + (children.length === 1 ? " skipped dependent" : " skipped dependents")));
       function showDependents() {
         if (!deps.open || packages.childElementCount) return;
@@ -286,7 +315,6 @@ function createBuildIssues(request, el, node) {
         packages.append(rows);
       }
       deps.addEventListener("toggle", showDependents);
-      showDependents();
       deps.append(packages);
       item.append(deps);
     }
@@ -294,46 +322,97 @@ function createBuildIssues(request, el, node) {
   }
 
   function runOption(started) {
-    const option = node("option", started ? runDate.format(new Date(started)) : "Latest run with issues");
+    const option = node("option", started ? runDate.format(new Date(started)) : "Latest run");
     option.value = started;
     return option;
   }
 
+  function showMore(count = pageSize) {
+    const rows = document.createDocumentFragment();
+    for (const entry of visible.slice(shown, shown + count)) rows.append(resultRow(entry));
+    shown += rows.childElementCount;
+    list.append(rows);
+    more.hidden = shown >= visible.length;
+  }
+
+  function renderPackages(limit = pageSize) {
+    visible = filter.value === "all" ? entries : entries.filter(entry => entry.outcome === filter.value);
+    list.replaceChildren();
+    shown = 0;
+    if (focusPackage) {
+      const index = visible.findIndex(entry => entry.pkg.package === focusPackage);
+      limit = Math.max(limit, index + 1);
+    }
+    showMore(limit);
+    if (!visible.length && entries.length) list.append(node("li", "No packages with this result in this run."));
+  }
+  more.onclick = () => showMore();
+  filter.onchange = () => { focusPackage = undefined; renderPackages(); };
+
   function render(data) {
     const runs = data.runs || [];
-    const options = [runOption("")];
-    if (selected && !runs.includes(selected)) options.push(runOption(selected));
-    for (const start of runs) options.push(runOption(start));
-    selector.replaceChildren(...options);
+    const options = document.createDocumentFragment();
+    options.append(runOption(""));
+    if (selected && !runs.includes(selected)) options.append(runOption(selected));
+    for (const start of runs) options.append(runOption(start));
+    selector.replaceChildren(options);
     selector.value = selected;
-    const failures = data.failed || [], skipped = data.skipped || [];
-    const failedNames = new Set(failures.map(issue => issue.package));
-    const blocked = new Map(), ungrouped = [];
-    for (const child of skipped) {
-      if (!failedNames.has(child.blocked_by)) { ungrouped.push(child); continue; }
-      if (!blocked.has(child.blocked_by)) blocked.set(child.blocked_by, []);
-      blocked.get(child.blocked_by).push(child);
+
+    const started = data.started;
+    const current = worker?.active && runInstant(worker.started) === runInstant(started);
+    const completed = data.succeeded || [], failures = data.failed || [];
+    const skipped = new Map(), blocked = new Map();
+    for (const pkg of data.skipped || []) {
+      let entry = skipped.get(pkg.package);
+      if (!entry) {
+        entry = {outcome: "skipped", pkg, blockers: []};
+        skipped.set(pkg.package, entry);
+      }
+      if (pkg.blocked_by && !entry.blockers.includes(pkg.blocked_by)) {
+        entry.blockers.push(pkg.blocked_by);
+        if (!blocked.has(pkg.blocked_by)) blocked.set(pkg.blocked_by, []);
+        blocked.get(pkg.blocked_by).push(pkg);
+      }
     }
-    const rows = document.createDocumentFragment();
-    for (const issue of failures) rows.append(issueRow(data.started, issue, blocked.get(issue.package) || [], true));
-    for (const child of ungrouped) rows.append(issueRow(data.started, child, [], false));
-    list.replaceChildren(rows);
-    retryAll.hidden = !failures.length && !skipped.length;
-    status.textContent = retryAll.hidden ? "No failed or skipped packages were recorded for this selection." :
-      "Run started " + runDate.format(new Date(data.started)) + " · " + failures.length.toLocaleString() + " failed · " +
-      new Set(skipped.map(s => s.package)).size.toLocaleString() + " skipped";
+    entries = [
+      ...completed.map(pkg => ({pkg, outcome: "succeeded"})),
+      ...failures.map(pkg => ({pkg, outcome: "failed", children: blocked.get(pkg.package)})),
+      ...skipped.values()
+    ];
+    entries.sort((a, b) => a.pkg.package.localeCompare(b.pkg.package));
+    renderPackages(Math.max(shown, pageSize));
+    retryAll.hidden = !failures.length && !skipped.size;
     retryControls();
+    if (!started) {
+      status.textContent = "No build runs are available yet.";
+      return;
+    }
+    const newest = !selected || runs[0] === started && runInstant(started) >= runInstant(worker?.started);
+    const run = (current ? "Current run" : newest ? "Latest run" : "Previous run") + " · " + runDate.format(new Date(started));
+    status.textContent = entries.length
+      ? [run, completed.length.toLocaleString() + " built", failures.length.toLocaleString() + " failed", skipped.size.toLocaleString() + " skipped"].join(" · ")
+      : run + (current ? " · Waiting for package results." : " · No package results were recorded.");
   }
 
   async function refresh() {
     if (!panel.open) return;
     const version = ++listVersion;
-    if (!view) status.textContent = "Loading build details…";
+    if (!view) status.textContent = "Loading build results…";
     try {
-      const data = await request("/api/admin/build/issues", "QUERY", selected ? {started: selected} : {});
+      let data = await request("/api/admin/build/results", "QUERY", selected ? {started: selected} : {});
       if (version !== listVersion || !panel.open) return;
-      if (!view || JSON.stringify(view) !== JSON.stringify(data)) render(data);
+      // A new run may have no Poudriere log directory yet. Link the
+      // older retained runs in the selector while the latest one is empty.
+      if (!selected && runInstant(worker?.started) > runInstant(data.started)) {
+        data = {started: worker.started, runs: data.runs};
+      }
+      if (selected) selected = data.started || selected;
+      if (view?.started !== data.started) {
+        shown = 0;
+        feedback.textContent = "";
+      }
       view = data;
+      render(view);
       if (focusPackage) {
         const row = Array.from(list.children).find(item => item.dataset.package === focusPackage);
         (row || selector).focus();
@@ -342,19 +421,24 @@ function createBuildIssues(request, el, node) {
       }
     } catch (error) {
       if (version !== listVersion || !panel.open) return;
-      view = undefined;
-      retryAll.hidden = true;
-      list.replaceChildren();
-      status.textContent = "Could not load retained build details. " + error.message;
+      clearResults();
+      status.textContent = "Could not load build results. " + error.message;
     }
+  }
+
+  function clearResults() {
+    ++retryVersion;
+    view = undefined;
+    entries = visible = [];
+    shown = 0;
+    list.replaceChildren();
+    retryAll.hidden = more.hidden = true;
+    status.textContent = feedback.textContent = "";
   }
 
   function chooseRun(started) {
     selected = started;
-    view = undefined;
-    list.replaceChildren();
-    retryAll.hidden = true;
-    feedback.textContent = "";
+    clearResults();
     if (selected && !Array.from(selector.options).some(option => option.value === selected)) {
       selector.add(runOption(started));
     }
@@ -362,27 +446,33 @@ function createBuildIssues(request, el, node) {
     if (!panel.open) panel.open = true;
     else refresh();
   }
-  selector.onchange = () => { focusPackage = undefined; chooseRun(selector.value); };
+  selector.onchange = () => {
+    focusPackage = undefined;
+    filter.value = "all";
+    chooseRun(selector.value);
+  };
   panel.addEventListener("toggle", () => { if (panel.open) refresh(); });
-  el("issue-refresh").onclick = refresh;
+  el("result-refresh").onclick = refresh;
   retryAll.onclick = () => { if (view?.started) return retry(view.started); };
 
   return {
     showLog,
     reveal(started, pkg) {
       focusPackage = pkg;
+      filter.value = "failed";
       chooseRun(started);
     },
     update(build) {
       const prior = worker;
       worker = build;
       if (prior?.can_force !== build.can_force) retryControls();
-      const changedRun = prior?.started !== build.started;
-      const failed = build.progress?.failed || 0, skipped = build.progress?.skipped || 0;
-      if (!panel.open && (failed || skipped) && (changedRun || !prior?.progress?.failed && !prior?.progress?.skipped)) {
-        panel.open = true;
-      } else if (panel.open && (changedRun || prior?.finished !== build.finished ||
-        failed !== (prior?.progress?.failed || 0) || skipped !== (prior?.progress?.skipped || 0))) {
+      const started = runInstant(build.started);
+      const changedRun = runInstant(prior?.started) !== started;
+      if (changedRun && !selected) clearResults();
+      if (!panel.open) return;
+      const watchingWorker = !selected || runInstant(selected) === started;
+      if (changedRun || prior?.finished !== build.finished || watchingWorker &&
+          (prior?.stage !== build.stage || ["built", "failed", "skipped"].some(key => prior?.progress?.[key] !== build.progress?.[key]))) {
         refresh();
       }
     },
@@ -390,18 +480,18 @@ function createBuildIssues(request, el, node) {
       ++listVersion;
       if (dialog.open) dialog.close();
       panel.open = false;
-      focusPackage = view = worker = undefined;
+      focusPackage = worker = undefined;
       selected = "";
-      list.replaceChildren();
+      filter.value = "all";
+      clearResults();
       selector.replaceChildren(runOption(""));
-      retryAll.hidden = true;
       status.textContent = feedback.textContent = "";
     }
   };
 }
 
 function createBuildView(request, el, node) {
-  const issues = createBuildIssues(request, el, node);
+  const runResults = createBuildResults(request, el, node);
   let currentBuild, liveVersion = 0, historyVersion = 0;
   let interval = "day", lastChart = "", lastHistoryCheck = 0;
   let submitting = false, waitingForWorker = false;
@@ -551,7 +641,7 @@ function createBuildView(request, el, node) {
       viewLog.dataset.logJob = job.package;
       viewLog.setAttribute("aria-label", "View build log for " + job.package);
       const started = currentBuild.started;
-      viewLog.onclick = () => issues.showLog(started, job, job.phase);
+      viewLog.onclick = () => runResults.showLog(started, job, job.phase);
       pkg.append(viewLog);
     }
 
@@ -593,7 +683,7 @@ function createBuildView(request, el, node) {
       el("build-feedback").hidden = true;
     }
     drawBuild(build);
-    issues.update(build);
+    runResults.update(build);
     el("build-poll-error").hidden = true;
     if (prior && (prior.finished !== build.finished || prior.started !== build.started)) lastHistoryCheck = 0;
   }
@@ -718,13 +808,13 @@ function createBuildView(request, el, node) {
         const inspect = node("button", "Inspect failure");
         inspect.type = "button";
         inspect.setAttribute("aria-label", "Inspect failure for " + result.package);
-        inspect.onclick = () => issues.reveal(result.started, result.package);
+        inspect.onclick = () => runResults.reveal(result.started, result.package);
         outcome.replaceChildren(inspect);
       } else {
         const log = node("button", "View log");
         log.type = "button";
         log.setAttribute("aria-label", "View build log for " + result.package);
-        log.onclick = () => issues.showLog(result.started, result, "Built");
+        log.onclick = () => runResults.showLog(result.started, result, "Built");
         outcome.append(" ", log);
       }
       row.append(name, outcome, finished);
@@ -773,7 +863,7 @@ function createBuildView(request, el, node) {
   el("history-retry").onclick = loadHistory;
 
   return {
-    loadBuild, loadHistory, receiveBuild, buildError, closeIssues: issues.close,
+    loadBuild, loadHistory, receiveBuild, buildError, closeResults: runResults.close,
     refreshPeriodic() {
       // Idle streams send only heartbeats. Keep the schedule and elapsed labels current.
       if (currentBuild) drawBuild(currentBuild);
@@ -1179,7 +1269,7 @@ function initManagement() {
     if (!visible && notificationDialog.open) notificationDialog.close();
     if (!visible) {
       inventoryView.closeClient();
-      buildView.closeIssues();
+      buildView.closeResults();
     }
     syncDashboardUpdates();
   }

@@ -35,6 +35,17 @@ type buildIssuesView struct {
 	Skipped []buildIssue `json:"skipped"`
 }
 
+type builtPackage struct {
+	Origin       string `json:"origin"`
+	Package      string `json:"package"`
+	BuildSeconds *int64 `json:"build_seconds,omitempty"`
+}
+
+type buildResultsView struct {
+	buildIssuesView
+	Succeeded []builtPackage `json:"succeeded"`
+}
+
 type buildLogPage struct {
 	Text  string `json:"text"`
 	Start int64  `json:"start"`
@@ -83,6 +94,15 @@ func openBulkLogs(cfg BuilderConfig) (*os.File, error) {
 	}
 	defer base.Close()
 	return openLogPath(base, "data/logs/bulk", true)
+}
+
+func openBuildMaster(cfg BuilderConfig) (*os.File, error) {
+	bulk, err := openBulkLogs(cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer bulk.Close()
+	return openLogPath(bulk, cfg.Jail+"-"+cfg.Ports, true)
 }
 
 func openBuildMetadata(run *os.File, name string) (*os.File, os.FileInfo, error) {
@@ -221,36 +241,15 @@ func hasBuildIssues(run *os.File) (bool, error) {
 	return false, nil
 }
 
-func readBuildIssues(ctx context.Context, cfg BuilderConfig, started time.Time) (buildIssuesView, error) {
-	view := buildIssuesView{Runs: []time.Time{}, Failed: []buildIssue{}, Skipped: []buildIssue{}}
-	bulk, err := openBulkLogs(cfg)
-	if errors.Is(err, os.ErrNotExist) && started.IsZero() {
-		return view, nil
-	}
-	if err != nil {
-		return view, err
-	}
-	defer bulk.Close()
-	master, err := openLogPath(bulk, cfg.Jail+"-"+cfg.Ports, true)
-	if errors.Is(err, os.ErrNotExist) && started.IsZero() {
-		return view, nil
-	}
-	if err != nil {
-		return view, err
-	}
-	defer master.Close()
-
+func retainedBuildRuns(ctx context.Context, master *os.File) ([]time.Time, error) {
 	entries, err := master.ReadDir(-1)
 	if err != nil {
-		return view, err
+		return nil, err
 	}
-	// Canonical Poudrine run names sort chronologically. Select the newest
-	// actual issue, even if newer clean or still-preparing runs exist.
-	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(b.Name(), a.Name()) })
-	var firstReadErr error
+	runs := []time.Time{}
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
-			return view, err
+			return nil, err
 		}
 		if !entry.IsDir() {
 			continue
@@ -259,7 +258,88 @@ func readBuildIssues(ctx context.Context, cfg BuilderConfig, started time.Time) 
 		if err != nil || t.Format(buildNameFormat) != entry.Name() {
 			continue
 		}
-		run, err := openLogPath(master, entry.Name(), true)
+		runs = append(runs, t)
+	}
+	slices.SortFunc(runs, func(a, b time.Time) int { return b.Compare(a) })
+	return runs, nil
+}
+
+func readBuildResults(ctx context.Context, cfg BuilderConfig, started time.Time) (buildResultsView, error) {
+	view := buildResultsView{
+		buildIssuesView: buildIssuesView{Runs: []time.Time{}, Failed: []buildIssue{}, Skipped: []buildIssue{}},
+		Succeeded:       []builtPackage{},
+	}
+	master, err := openBuildMaster(cfg)
+	if errors.Is(err, os.ErrNotExist) && started.IsZero() {
+		return view, nil
+	}
+	if err != nil {
+		return view, err
+	}
+	defer master.Close()
+	view.Runs, err = retainedBuildRuns(ctx, master)
+	if err != nil {
+		return view, err
+	}
+	// Read only the selected run's lists. New, successful and no-work runs
+	// all take precedence over older failures when following the latest run.
+	for len(view.Runs) > 0 {
+		chosen := started
+		if chosen.IsZero() {
+			chosen = view.Runs[0]
+		}
+		run, err := openLogPath(master, chosen.UTC().Format(buildNameFormat), true)
+		if started.IsZero() && errors.Is(err, os.ErrNotExist) {
+			view.Runs = view.Runs[1:] // Pruned since readdir.
+			continue
+		}
+		if err != nil {
+			return view, err
+		}
+		defer run.Close()
+		view.Started = chosen.UTC()
+		view.Failed, view.Skipped, err = runIssues(ctx, run)
+		if err != nil {
+			return view, err
+		}
+		seen := make(map[string]bool)
+		err = scanBuildResults(ctx, run, "built", func(line string, fields []string) bool {
+			pkg := fields[1]
+			if !seen[pkg] {
+				seen[pkg] = true
+				view.Succeeded = append(view.Succeeded, builtPackage{Origin: fields[0], Package: pkg, BuildSeconds: packageBuildSeconds("built", line, fields)})
+			}
+			return true
+		})
+		return view, err
+	}
+	if !started.IsZero() {
+		return view, os.ErrNotExist
+	}
+	return view, nil
+}
+
+// Older Management clients use this endpoint to find their latest failure.
+func readBuildIssues(ctx context.Context, cfg BuilderConfig, started time.Time) (buildIssuesView, error) {
+	view := buildIssuesView{Runs: []time.Time{}, Failed: []buildIssue{}, Skipped: []buildIssue{}}
+	master, err := openBuildMaster(cfg)
+	if errors.Is(err, os.ErrNotExist) && started.IsZero() {
+		return view, nil
+	}
+	if err != nil {
+		return view, err
+	}
+	defer master.Close()
+	runs, err := retainedBuildRuns(ctx, master)
+	if err != nil {
+		return view, err
+	}
+	var firstReadErr error
+	for _, t := range runs {
+		if err := ctx.Err(); err != nil {
+			return view, err
+		}
+		run, err := openLogPath(master, t.Format(buildNameFormat), true)
 		if errors.Is(err, os.ErrNotExist) {
 			continue // Poudriere can prune a run after readdir.
 		}

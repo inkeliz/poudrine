@@ -192,6 +192,7 @@ func (a *Admin) Handler() http.Handler {
 	mux.HandleFunc("QUERY /api/admin/clients/summary", a.signedEmptyQuery(a.clientSummaries))
 	mux.HandleFunc("QUERY /api/admin/clients/packages", a.signed(a.clientPackages))
 	mux.HandleFunc("QUERY /api/admin/build/issues", a.signed(a.buildIssues))
+	mux.HandleFunc("QUERY /api/admin/build/results", a.signed(a.buildResults))
 	mux.HandleFunc("QUERY /api/admin/build/log", a.signed(a.packageLog))
 	mux.HandleFunc("POST /api/admin/build/retry", a.signed(a.queueBuild))
 	mux.HandleFunc("POST /api/admin/build/force", a.signed(a.queueBuild))

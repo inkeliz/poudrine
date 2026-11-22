@@ -150,6 +150,21 @@ func (a *Admin) buildIssues(w http.ResponseWriter, r *http.Request, body []byte)
 	adminJSON(w, view)
 }
 
+func (a *Admin) buildResults(w http.ResponseWriter, r *http.Request, body []byte) {
+	var args struct {
+		Started time.Time `json:"started"`
+	}
+	if !queryArgs(w, body, &args) {
+		return
+	}
+	view, err := readBuildResults(r.Context(), a.cfg.builder, args.Started)
+	if err != nil {
+		writeDiagnosticError(w, err)
+		return
+	}
+	adminJSON(w, view)
+}
+
 func (a *Admin) packageLog(w http.ResponseWriter, r *http.Request, body []byte) {
 	var args struct {
 		Started time.Time `json:"started"`

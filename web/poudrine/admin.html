@@ -99,16 +99,18 @@
       <p id="worker-mode" class="build-feedback" hidden>Manual builds are available when the Poudrine service runs the build worker.</p>
       <p id="build-feedback" class="build-feedback" role="status" hidden></p>
       <p id="build-poll-error" class="build-feedback" role="status" hidden></p>
-      <details id="build-issues">
-        <summary>Failed and skipped packages</summary>
-        <div class="issue-toolbar">
-          <label>Build run<select id="issue-run"><option value="">Latest run with issues</option></select></label>
-          <button type="button" id="issue-refresh">Refresh details</button>
-          <button type="button" id="issue-retry-all" hidden>Retry all affected packages</button>
+      <details id="build-results">
+        <summary>Build run history</summary>
+        <div class="result-toolbar">
+          <label>Build run<select id="result-run"><option value="">Latest run</option></select></label>
+          <label>Result<select id="result-filter"><option value="all">All packages</option><option value="succeeded">Built</option><option value="failed">Failed</option><option value="skipped">Skipped</option></select></label>
+          <button type="button" id="result-refresh">Refresh results</button>
+          <button type="button" id="result-retry-all" hidden>Retry all affected packages</button>
         </div>
-        <p id="issue-status" role="status"></p>
-        <ul id="issue-list"></ul>
-        <p id="issue-feedback" role="status"></p>
+        <p id="result-status" role="status"></p>
+        <ul id="result-list" aria-label="Package results"></ul>
+        <button type="button" id="result-more" hidden>Show more packages</button>
+        <p id="result-feedback" role="status"></p>
       </details>
       <details id="build-log" hidden><summary>Worker output</summary><pre id="build-log-text" tabindex="0" aria-label="Worker output"></pre></details>
     </section>

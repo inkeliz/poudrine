@@ -180,9 +180,9 @@ Poudrine checks the FreeBSD metadata every five minutes by default. When the mir
 
 **Run build now** updates the jail and ports tree and starts an incremental bulk build. **Queue next build** reserves one follow-up while a build is active. With no tracked origins, the worker still updates the jail and ports tree. Between scheduled runs it checks for changes to the tracked origins every 30 seconds.
 
-Open **Build activity → Failed and skipped packages** to see which package failed, the build phase and the packages it blocked. For example, if `devel/abseil` fails during `fetch`, open **View log** on its row to see Poudriere’s fetch output. The skipped `misc/codex` and `devel/protobuf` packages appear underneath. **Load earlier output** reads back to the beginning of the package log. The run selector lets you inspect earlier failures while another build is running.
+Open **Build activity → Build run history** to see package outcomes for the latest run. When a new run starts, its results appear as packages finish. Use **Result** to show only **Built**, **Failed** or **Skipped** packages. Choose an earlier run by date to inspect it. If a failed package succeeds on retry, its success appears in the new run and its original failure stays in the earlier run.
 
-Open **View log** beside a running package to follow its output with **Refresh latest output**. Completed packages also have a log link in the recent build history.
+Use **View log** for a successful or failed build. For example, if `devel/abseil` fails during `fetch`, its log shows Poudriere’s fetch output and the skipped package entries identify what blocked them. **Load earlier output** reads back to the beginning. For a running package, use **Refresh latest output** to follow its progress.
 
 Choose **Retry with dependents** to queue that group, or **Retry all affected packages** for the selected run. The worker starts a fresh incremental Poudriere run in the configured working hours, after any active build finishes. It reuses healthy archives and builds missing packages locally. Diagnosis uses the retained files under `<basefs>/data/logs/bulk/<jail>-<ports>/<run>/`; the web service account needs read access there. Retrying requires the supervised service.
 
@@ -267,6 +267,7 @@ poudrine-v2\n<METHOD>\n<PATH>\n<UNIX_SECONDS>\n<NONCE>\n
 | `QUERY /api/admin/build` | `{}` |
 | `QUERY /api/admin/build/events` | `{}` |
 | `QUERY /api/admin/build/history` | `{"interval":"day"}` |
+| `QUERY /api/admin/build/results` | `{}` for the latest retained run, or `{"started":"2026-11-21T02:00:00.123456789Z"}` for a specific run |
 | `QUERY /api/admin/build/issues` | `{}` for the latest run with issues, or `{"started":"2026-11-21T02:00:00.123456789Z"}` |
 | `QUERY /api/admin/build/log` | `{"started":"2026-11-21T02:00:00.123456789Z","package":"abseil-20250127.1_3"}` |
 | `POST /api/admin/build/retry` | `{"started":"2026-11-21T02:00:00.123456789Z","package":"abseil-20250127.1_3"}` |
@@ -275,7 +276,7 @@ poudrine-v2\n<METHOD>\n<PATH>\n<UNIX_SECONDS>\n<NONCE>\n
 
 Login returns HTTP 204. Each `build` event contains the full snapshot, starting with the current state when you connect. Sign each reconnection with a fresh nonce. History accepts `hour`, `day`, `week` and `month`. Forcing a build returns HTTP 202 on acceptance and includes `already_queued` in the response. The client report command on the website signs the exact text it posts to the repository’s `/api/inventory` with that client’s own key.
 
-Use the exact `started` value returned by issues or history to select a run. The log query returns the newest output first. Pass its `start` byte offset as `before` to read the preceding chunk. Omit `package` from a retry to queue all the failed and skipped origins for that run.
+Use the exact `started` value returned by results or history to select a run. The log query returns the newest output first. Pass its `start` byte offset as `before` to read the preceding chunk. Omit `package` from a retry to queue all the failed and skipped origins for that run.
 
 ### Optional public status page
 

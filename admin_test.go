@@ -182,7 +182,7 @@ func TestManagementQueryProtocol(t *testing.T) {
 	for _, path := range []string{
 		"/api/status", "/api/setup", "/api/admin/config", buildStatusPath, buildEventsPath,
 		originsPath, packagesPath, clientSummaryPath, clientPackagesPath, buildStatusPath + "/history",
-		"/api/admin/clients", "/api/admin/tracked", "/api/admin/push-key", "/api/admin/build/issues", "/api/admin/build/log",
+		"/api/admin/clients", "/api/admin/tracked", "/api/admin/push-key", "/api/admin/build/issues", "/api/admin/build/results", "/api/admin/build/log",
 	} {
 		for _, method := range []string{http.MethodGet, http.MethodHead} {
 			w := adminResponse(t, a, httptest.NewRequest(method, path, nil), http.StatusMethodNotAllowed)

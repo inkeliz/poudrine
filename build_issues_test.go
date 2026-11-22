@@ -158,6 +158,10 @@ func TestIssueReaderEmptyTree(t *testing.T) {
 	if err != nil || !view.Started.IsZero() || view.Runs == nil || view.Failed == nil || view.Skipped == nil {
 		t.Fatalf("empty tree: %+v, %v", view, err)
 	}
+	history, err := readBuildResults(t.Context(), cfg, time.Time{})
+	if err != nil || !history.Started.IsZero() || history.Runs == nil || history.Succeeded == nil || history.Failed == nil || history.Skipped == nil {
+		t.Fatalf("empty build history: %+v, %v", history, err)
+	}
 }
 
 func TestRetainedLogForRunningAndBuiltPackages(t *testing.T) {
@@ -215,5 +219,12 @@ func TestRetainedLogForRunningAndBuiltPackages(t *testing.T) {
 	}
 	if _, err := readBuildIssues(t.Context(), cfg, broken); err == nil {
 		t.Fatal("unexpectedly used a result file symlink")
+	}
+	if _, err := readBuildResults(t.Context(), cfg, time.Time{}); err == nil {
+		t.Fatal("history hid the unreadable latest run")
+	}
+	results, err := readBuildResults(t.Context(), cfg, start)
+	if err != nil || !results.Started.Equal(start) || len(results.Succeeded) != 1 {
+		t.Fatalf("older results unavailable after a newer run was unreadable: %+v, %v", results, err)
 	}
 }

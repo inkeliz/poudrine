@@ -23,6 +23,18 @@ type packageLogCursor struct {
 	offset int64
 }
 
+// Older builders can omit elapsed time. An empty failure reason leaves two
+// literal spaces between the phase and elapsed seconds in the native file.
+func packageBuildSeconds(list, line string, fields []string) *int64 {
+	emptyReason := list == "failed" && len(fields) == 4 && strings.HasSuffix(line, "  "+fields[3])
+	if list == "built" && len(fields) == 3 || list == "failed" && len(fields) == 5 || emptyReason {
+		if seconds, err := strconv.ParseUint(fields[len(fields)-1], 10, 63); err == nil {
+			return new(int64(seconds))
+		}
+	}
+	return nil
+}
+
 func (c *packageLogCursor) read(ctx context.Context, dir *os.Root, started time.Time, file, outcome string, active bool, save func(context.Context, []BuildRecord) error) error {
 	f, err := dir.OpenFile(".poudriere.ports."+file, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 	if errors.Is(err, os.ErrNotExist) {
@@ -82,16 +94,7 @@ func (c *packageLogCursor) read(ctx context.Context, dir *os.Root, started time.
 			continue
 		}
 		record := BuildRecord{Started: started, Package: fields[1], Finished: finished, Outcome: outcome, Origin: fields[0], ABI: abi}
-		// Success lists contain origin, package and seconds. Failure lists
-		// additionally contain phase and reason. Older and crashed builders
-		// can omit the duration entirely. An empty failure reason leaves two
-		// literal spaces between phase and elapsed in Poudriere's output.
-		emptyReason := file == "failed" && len(fields) == 4 && strings.HasSuffix(line, "  "+fields[3])
-		if file == "built" && len(fields) == 3 || file == "failed" && len(fields) == 5 || emptyReason {
-			if seconds, err := strconv.ParseUint(fields[len(fields)-1], 10, 63); err == nil {
-				record.BuildSeconds = new(int64(seconds))
-			}
-		}
+		record.BuildSeconds = packageBuildSeconds(file, line, fields)
 		batch = append(batch, record)
 		if len(batch) == historyBatchSize {
 			if err := save(ctx, batch); err != nil {

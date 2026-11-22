@@ -257,28 +257,32 @@ input[aria-invalid="true"] {border-color: #a4473f}
   #build-jobs li {grid-template-columns: minmax(0,1.6fr) minmax(0,1fr)}
   .job-metrics {grid-column: 1/-1; max-width: 27rem}
 }
-#build-issues {margin-top: 20px; border-top: 1px solid #514b61; padding-top: 12px}
-#build-issues > summary {color: #f2effb; font-size: .95rem}
-.issue-toolbar, .issue-actions, .dialog-log-actions {display: flex; flex-wrap: wrap; align-items: end; gap: 8px}
+#build-results {margin-top: 20px; border-top: 1px solid #514b61; padding-top: 12px}
+#build-results > summary {color: #f2effb; font-size: .95rem}
+.result-toolbar, .result-actions, .dialog-log-actions {display: flex; flex-wrap: wrap; align-items: end; gap: 8px}
 .job-package button {margin-top: 5px; padding: 3px 8px; font-size: .75rem}
-.issue-toolbar {margin-block: 14px 8px}
-.issue-toolbar label {font-size: .81rem; font-weight: 550; display: grid; gap: 4px; max-width: 100%}
-.issue-toolbar select {font: inherit; background: #fff; color: var(--ink); padding: 8px; border-radius: 6px; max-width: 100%}
-.issue-toolbar button, .issue-actions button {font-size: .8rem; padding: 7px 11px}
-#issue-status, #issue-feedback {font-size: .84rem; color: #ddd8ec}
-#issue-feedback:not(:empty) {margin-top: 12px}
-#issue-list {list-style: none; padding: 0; margin: 0; max-height: 34rem; overflow: auto}
-#issue-list > li {padding: 15px 2px; border-bottom: 1px solid #514b61}
-#issue-list > li:last-child {border-bottom: 0}
-.issue-row {display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 9px 18px}
-.issue-name {overflow-wrap: anywhere}
-.issue-name strong, .issue-name small {display: block}
-.issue-name strong {font: 600 .93rem/1.5 var(--mono)}
-.issue-name small, .issue-deps li {font-size: .8rem; color: #d0cbdc}
-.issue-reason {margin-top: 4px; color: #ffcfbd; font-size: .88rem; overflow-wrap: anywhere}
-.issue-deps {margin-top: 8px}
-.issue-deps summary {width: fit-content; color: #dfdaed; font-size: .84rem}
-.issue-deps ul {padding-left: 1.3rem; margin: 5px 0 0; overflow-wrap: anywhere}
+.result-toolbar {margin-block: 14px 8px}
+.result-toolbar label {font-size: .81rem; font-weight: 550; display: grid; gap: 4px; max-width: 100%}
+.result-toolbar select {font: inherit; background: #fff; color: var(--ink); padding: 8px; border-radius: 6px; max-width: 100%}
+.result-toolbar button, .result-actions button, #result-more {font-size: .8rem; padding: 7px 11px}
+#result-status, #result-feedback {font-size: .84rem; color: #ddd8ec}
+#result-feedback:not(:empty) {margin-top: 12px}
+#result-list {list-style: none; padding: 0; margin: 0; max-height: 34rem; overflow: auto}
+#result-list > li {padding: 15px 2px; border-bottom: 1px solid #514b61}
+#result-list > li:last-child {border-bottom: 0}
+.result-row {display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 9px 18px}
+.result-name {overflow-wrap: anywhere}
+.result-name strong, .result-name small {display: block}
+.result-name strong {font: 600 .93rem/1.5 var(--mono)}
+.result-name small, .result-deps li {font-size: .8rem; color: #d0cbdc}
+.result-outcome {font-size: .8rem; font-weight: 650; color: #d0cbda}
+.result-outcome[data-outcome="succeeded"] {color: #a5dfb9}
+.result-outcome[data-outcome="failed"] {color: #ffb89f}
+.result-reason {margin-top: 3px; color: #ddd8ec; font-size: .82rem; overflow-wrap: anywhere}
+#result-more {margin-top: 8px}
+.result-deps {margin-top: 8px}
+.result-deps summary {width: fit-content; color: #dfdaed; font-size: .84rem}
+.result-deps ul {padding-left: 1.3rem; margin: 5px 0 0; overflow-wrap: anywhere}
 #package-log-dialog {width: min(62rem, calc(100% - 32px))}
 #package-log-title {overflow-wrap: anywhere}
 #package-log-info, #package-log-status {font-size: .85rem; color: var(--muted); margin: 8px 0; overflow-wrap: anywhere}
