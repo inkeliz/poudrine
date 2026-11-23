@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/inkeliz/poudrine/internal/constanttime"
 	"github.com/inkeliz/poudrine/internal/packageinfo"
+	"golang.org/x/sync/singleflight"
 )
 
 // Only completed, verified downloads are named by a digest. Open descriptors
@@ -38,6 +38,7 @@ type Cache struct {
 	upstream  *url.URL
 	client    *http.Client
 	fill      chan struct{}
+	flights   singleflight.Group
 	downloads map[string]*archiveDownload
 	mu        sync.Mutex
 	files     map[string]cachedArchive
@@ -49,7 +50,7 @@ func NewCache(dir string, limit int64, upstream *url.URL, client *http.Client) (
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	c := &Cache{dir: dir, Limit: limit, upstream: upstream, client: upstreamClient(client), fill: make(chan struct{}, 4), downloads: make(map[string]*archiveDownload), files: make(map[string]cachedArchive)}
+	c := &Cache{dir: dir, Limit: limit, upstream: upstream, client: upstreamClient(client), fill: make(chan struct{}, maxUpstreamDownloads), downloads: make(map[string]*archiveDownload), files: make(map[string]cachedArchive)}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -206,147 +207,55 @@ func PackageCacheKey(sum string) string {
 	return constanttime.EncodeHex(digest[:])
 }
 
-type archiveDownload struct {
-	done  chan struct{}
-	users int
-	file  *os.File
-	size  int64
-	err   error
-}
-
-func (c *Cache) releaseDownload(d *archiveDownload) {
-	c.mu.Lock()
-	d.users--
-	cleanup := d.users == 0 && d.file != nil
-	c.mu.Unlock()
-	if cleanup {
-		os.Remove(d.file.Name())
-		d.file.Close()
-	}
-}
-
+// Open waits for a fully verified archive. Bootstrap signatures and internal
+// consumers use this path; repository responses use Stream for live delivery.
 func (c *Cache) Open(ctx context.Context, p packageinfo.Package) (*os.File, error) {
-	key := PackageCacheKey(p.Sum)
+	r, err := c.Stream(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	if r.file != nil {
+		return r.file, nil
+	}
+	defer r.Close()
+	if err := r.Verify(); err != nil {
+		return nil, err
+	}
+	return os.Open(r.download.file.Name())
+}
+
+// storeDownload publishes only completed, verified bytes. Sync never holds mu.
+func (c *Cache) storeDownload(ctx context.Context, p packageinfo.Package, key string, f *os.File) error {
+	if p.Size > c.Limit || c.Limit <= 0 {
+		return nil
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
 	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+		s := c.catalog.Load()
+		if s.supersedes(p) {
+			return nil
 		}
 		c.mu.Lock()
-		if f, err := c.hit(key, p); f != nil || err != nil {
-			c.mu.Unlock()
-			return f, err
+		if s == c.catalog.Load() {
+			break
 		}
-		d, waiting := c.downloads[key]
-		if !waiting {
-			d = &archiveDownload{done: make(chan struct{}), size: p.Size}
-			c.downloads[key] = d
-		}
-		d.users++
 		c.mu.Unlock()
-		if !waiting {
-			var file *os.File
-			var err error
-			select {
-			case c.fill <- struct{}{}:
-				file, err = c.fetch(ctx, p, key)
-				<-c.fill
-			case <-ctx.Done():
-				err = ctx.Err()
-			}
-			c.mu.Lock()
-			d.file, d.err = file, err
-			delete(c.downloads, key)
-			close(d.done)
-			c.mu.Unlock()
-		}
-		select {
-		case <-ctx.Done():
-			c.releaseDownload(d)
-			return nil, ctx.Err()
-		case <-d.done:
-		}
-		if waiting && (errors.Is(d.err, context.Canceled) || errors.Is(d.err, context.DeadlineExceeded)) {
-			c.releaseDownload(d)
-			continue // A canceled owner must not cancel other clients' downloads.
-		}
-		var file *os.File
-		err := d.err
-		if err == nil {
-			if d.size != p.Size {
-				err = errUntrustedPackage
-			} else {
-				file, err = os.Open(d.file.Name())
-			}
-		}
-		c.releaseDownload(d)
-		return file, err
 	}
-}
-
-// fetch owns one of four download slots. A private temporary hardlink stays
-// alive until every coalesced caller has opened an independent descriptor.
-func (c *Cache) fetch(ctx context.Context, p packageinfo.Package, key string) (*os.File, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.upstream.JoinPath(p.Path).String(), nil)
-	if err != nil {
-		return nil, err
+	defer c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, err
+	if err := c.makeRoom(p.Size); err != nil {
+		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("upstream package: HTTP %d", resp.StatusCode)
+	if err := os.Link(f.Name(), filepath.Join(c.dir, key)); err != nil {
+		return err
 	}
-	if resp.ContentLength >= 0 && resp.ContentLength != p.Size {
-		return nil, errUntrustedPackage
-	}
-	f, err := os.CreateTemp(c.dir, ".download-")
-	if err != nil {
-		return nil, err
-	}
-	ready := false
-	defer func() {
-		if !ready {
-			os.Remove(f.Name())
-			f.Close()
-		}
-	}()
-	if err := VerifyPackage(resp.Body, f, p); err != nil {
-		return nil, err
-	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return nil, err
-	}
-	if p.Size <= c.Limit && c.Limit > 0 {
-		if err := f.Sync(); err != nil {
-			return nil, err
-		}
-		for {
-			s := c.catalog.Load()
-			// A download from the previous catalog can finish after publication.
-			if s.supersedes(p) {
-				ready = true
-				return f, nil
-			}
-			c.mu.Lock()
-			if s == c.catalog.Load() {
-				break
-			}
-			c.mu.Unlock()
-		}
-		defer c.mu.Unlock()
-		if err := c.makeRoom(p.Size); err != nil {
-			return nil, err
-		}
-		if err := os.Link(f.Name(), filepath.Join(c.dir, key)); err != nil {
-			return nil, err
-		}
-		c.files[key] = cachedArchive{Key: key, Package: p, Used: time.Now()}
-		c.Bytes += p.Size
-	}
-	ready = true
-	return f, nil
+	c.files[key] = cachedArchive{Key: key, Package: p, Used: time.Now()}
+	c.Bytes += p.Size
+	return nil
 }
 
 // pkg writes the compact manifest at the beginning of the archive. Read

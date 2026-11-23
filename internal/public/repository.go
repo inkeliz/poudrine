@@ -271,6 +271,18 @@ func (s *Repository) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		return
 	}
+	if !p.Local && !isSignature {
+		content, err := s.Cache.Stream(r.Context(), p)
+		if err != nil {
+			log.Printf("open stream %q: %v", p.Path, err)
+			http.Error(w, "package unavailable", http.StatusBadGateway)
+			return
+		}
+		defer content.Close()
+		s.recordActivity(ip, &p)
+		serveStream(w, r, rel, content)
+		return
+	}
 	var err error
 	if p.Local {
 		if !filepath.IsLocal(p.Path) {

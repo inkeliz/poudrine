@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const repositoryConnectionsPerIP = 8
+const repositoryConnectionsPerIP = 16
 const repositoryConnectionLifetime = 30 * time.Minute
 
 type peerListener struct {

@@ -92,6 +92,8 @@ pkg rquery -r Poudrine '%n-%v' firefox
 
 Use **Compiled** for local builds, **Cached** for downloaded archives, or **Different from FreeBSD** for compiled archives whose version differs from FreeBSD’s. After a successful catalog check, Poudrine removes cached copies when a matching local build has the same or a newer version. A newer FreeBSD download stays cached.
 
+On a cache miss, Poudrine starts forwarding arriving package bytes while the shared download continues. Up to sixteen distinct archives can download at once, and clients requesting the same archive share that transfer. Each client can start at byte zero or request a byte range. The final response byte waits for whole-archive verification; a checksum failure ends the response as incomplete. Arriving bytes are stored directly in a shared temporary file, which remains readable by other clients until their readers close. This avoids retaining package payloads in Go heap buffers.
+
 Management shows the number and size of compiled archives and cached downloads. **Poudriere disk usage** covers its base directory and distfiles, including packages stored inside the base directory. The worker measures this at startup and every 15 minutes.
 
 **Port version** comes from the latest Poudriere bulk run’s resolved ports list for the configured jail and tree. **Local (FreeBSD)** compares the compiled version with the version in the verified FreeBSD catalog. A dash means the value is unavailable. **Consumers** counts distinct client IPs that requested the package or included a catalog match in their latest report. Repeated downloads from one IP count once. Hover over **Last activity** for the exact date and time.

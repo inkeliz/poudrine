@@ -19,7 +19,7 @@ import (
 func TestCacheConcurrentDistinctAndCoalescedDownloads(t *testing.T) {
 	for _, limit := range []int64{0, 1024} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
-			entered := make(chan string, 10)
+			entered := make(chan string, maxUpstreamDownloads+2)
 			finish := make(chan struct{})
 			var hits, active, peak atomic.Int32
 			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,12 +41,12 @@ func TestCacheConcurrentDistinctAndCoalescedDownloads(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			requests := make([]packageinfo.Package, 5)
+			requests := make([]packageinfo.Package, maxUpstreamDownloads+1)
 			for i := range requests {
 				name := fmt.Sprint(i)
 				requests[i] = testutil.Package(name, "/All/"+name+".pkg")
 			}
-			result := make(chan error, 6)
+			result := make(chan error, maxUpstreamDownloads+2)
 			open := func(p packageinfo.Package) {
 				f, err := cache.Open(t.Context(), p)
 				if err == nil {
@@ -80,7 +80,7 @@ func TestCacheConcurrentDistinctAndCoalescedDownloads(t *testing.T) {
 			for _, p := range requests[1:] {
 				go open(p)
 			}
-			for range 3 {
+			for range maxUpstreamDownloads - 1 {
 				select {
 				case <-entered:
 				case <-time.After(time.Second):
@@ -89,16 +89,16 @@ func TestCacheConcurrentDistinctAndCoalescedDownloads(t *testing.T) {
 			}
 			select {
 			case <-entered:
-				t.Fatal("more than four upstream downloads")
+				t.Fatal("too many upstream downloads")
 			case <-time.After(20 * time.Millisecond):
 			}
 			release()
-			for range 6 {
+			for range maxUpstreamDownloads + 2 {
 				if err := <-result; err != nil {
 					t.Fatal(err)
 				}
 			}
-			if hits.Load() != 5 || peak.Load() > 4 {
+			if hits.Load() != maxUpstreamDownloads+1 || peak.Load() > maxUpstreamDownloads {
 				t.Fatalf("hits %d peak %d", hits.Load(), peak.Load())
 			}
 		})
