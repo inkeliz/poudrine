@@ -31,7 +31,7 @@ func TestRetainedBuildIssues(t *testing.T) {
 		}
 	}
 	const abseil = "abseil-20250127.1_3"
-	write(start, "failed", "devel/abseil "+abseil+" fetch fetch_timeout 2\n"+"misc/other other-1 configure  0\n")
+	write(start, "failed", strings.Repeat("devel/abseil "+abseil+" fetch fetch_timeout 2\n", 2)+"misc/other other-1 configure  0\n")
 	write(start, "skipped", "misc/codex codex-0.170.0 "+abseil+"\n"+"devel/protobuf protobuf-29.6_1,1 "+abseil+"\n"+
 		"misc/codex codex-0.170.0 "+abseil+"\n"+"misc/codex codex-0.170.0 other-1\n"+"devel/partial partial-1 "+abseil)
 	write(older, "failed", "misc/crashed crashed-1 pkgbuild crashed\n")
@@ -52,12 +52,15 @@ func TestRetainedBuildIssues(t *testing.T) {
 	if view.Failed[1].Reason != "" || view.Skipped[0].BlockedBy != abseil || view.Skipped[1].Package != "protobuf-29.6_1,1" || view.Skipped[2].BlockedBy != "other-1" {
 		t.Fatalf("incorrect failure details/dependency chain: %+v", view)
 	}
+	if view.Failed[0].BuildSeconds == nil || *view.Failed[0].BuildSeconds != 2 || view.Failed[1].BuildSeconds == nil || *view.Failed[1].BuildSeconds != 0 || view.Skipped[0].BuildSeconds != nil {
+		t.Fatalf("incorrect durations for failed and skipped packages: %+v", view)
+	}
 	view, err = ReadBuildIssues(t.Context(), cfg, clean)
 	if err != nil || view.Started != clean || len(view.Failed)+len(view.Skipped) != 0 {
 		t.Fatalf("clean run: %+v, %v", view, err)
 	}
 	view, err = ReadBuildIssues(t.Context(), cfg, older)
-	if err != nil || len(view.Failed) != 1 || view.Failed[0].Reason != "crashed" {
+	if err != nil || len(view.Failed) != 1 || view.Failed[0].Reason != "crashed" || view.Failed[0].BuildSeconds != nil {
 		t.Fatalf("older failure: %+v, %v", view, err)
 	}
 	if _, err := ReadBuildLog(t.Context(), cfg, start, abseil, nil); !errors.Is(err, fs.ErrNotExist) {
@@ -160,7 +163,7 @@ func TestIssueReaderEmptyTree(t *testing.T) {
 	if err != nil || !view.Started.IsZero() || view.Runs == nil || view.Failed == nil || view.Skipped == nil {
 		t.Fatalf("empty tree: %+v, %v", view, err)
 	}
-	history, err := ReadBuildResults(t.Context(), cfg, time.Time{})
+	history, err := ReadBuildResults(t.Context(), cfg, time.Time{}, false)
 	if err != nil || !history.Started.IsZero() || history.Runs == nil || history.Succeeded == nil || history.Failed == nil || history.Skipped == nil {
 		t.Fatalf("empty build history: %+v, %v", history, err)
 	}
@@ -222,10 +225,10 @@ func TestRetainedLogForRunningAndBuiltPackages(t *testing.T) {
 	if _, err := ReadBuildIssues(t.Context(), cfg, broken); err == nil {
 		t.Fatal("unexpectedly used a result file symlink")
 	}
-	if _, err := ReadBuildResults(t.Context(), cfg, time.Time{}); err == nil {
+	if _, err := ReadBuildResults(t.Context(), cfg, time.Time{}, false); err == nil {
 		t.Fatal("history hid the unreadable latest run")
 	}
-	results, err := ReadBuildResults(t.Context(), cfg, start)
+	results, err := ReadBuildResults(t.Context(), cfg, start, false)
 	if err != nil || !results.Started.Equal(start) || len(results.Succeeded) != 1 {
 		t.Fatalf("older results unavailable after a newer run was unreadable: %+v, %v", results, err)
 	}

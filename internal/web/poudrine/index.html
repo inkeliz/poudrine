@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Client setup · Poudrine</title>
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#151615">
+  <title>Client · Poudrine</title>
   <link rel="stylesheet" href="style.css">
   <script src="poudrine.js" defer></script>
 </head>
@@ -12,7 +14,7 @@
 <header class="site-head">
   <div class="bar">
     <a class="brand" href="./"><span class="brand-mark" aria-hidden="true"></span>Poudrine</a>
-    <nav aria-label="Main"><a href="./" aria-current="page">Client setup</a><a href="admin">Management</a></nav>
+    <nav aria-label="Main"><a href="./" aria-current="page">Client</a><a href="admin">Management</a></nav>
   </div>
 </header>
 <main id="main">
@@ -85,14 +87,18 @@
   </section>
 
   <section class="client-report" aria-labelledby="report-title">
-    <h2 id="report-title">Report installed packages</h2>
-    <p>Run this in a root <code>sh</code> shell to report this client’s installed package names, versions and port origins. The administrator can see the full report. Poudrine tracks matching ports without downloading the packages.</p>
-    <p>OpenSSL creates an Ed25519 key on the first run and uses it to sign the report. Keep <code>/var/db/poudrine-client/inventory.key</code> on this client for future reports.</p>
-    <button class="report-copy" type="button" data-copy="report-command" hidden><i class="copy-icon" aria-hidden="true"></i>Copy report command</button>
-    <details class="command-disclosure">
-      <summary>Review report command</summary>
-      <pre tabindex="0" aria-label="Inventory report command"><code id="report-command">{{.ReportCommand}}</code></pre>
-    </details>
+    <div>
+      <h2 id="report-title">Report installed packages</h2>
+      <p>Run this in a root <code>sh</code> shell to report this client’s installed package names, versions and port origins. The administrator can see the full report. Poudrine tracks matching ports without downloading the packages.</p>
+      <p>OpenSSL creates an Ed25519 key on the first run and uses it to sign the report. Keep <code>/var/db/poudrine-client/inventory.key</code> on this client for future reports.</p>
+    </div>
+    <div class="report-actions">
+      <button class="report-copy" type="button" data-copy="report-command" hidden><i class="copy-icon" aria-hidden="true"></i>Copy report command</button>
+      <details class="command-disclosure">
+        <summary>Review report command</summary>
+        <pre tabindex="0" aria-label="Inventory report command"><code id="report-command">{{.ReportCommand}}</code></pre>
+      </details>
+    </div>
   </section>
   <p id="copy-feedback" class="copy-feedback" role="status"></p>
 </main>

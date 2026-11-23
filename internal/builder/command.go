@@ -219,6 +219,9 @@ func (b *Builder) runWorkCommand(ctx context.Context, args []string, stdout, std
 	var bulkName string
 	if len(args) >= 3 && args[0] == "bulk" && args[len(args)-2] == "-B" {
 		bulkName = args[len(args)-1]
+		b.mu.Lock()
+		b.jobClock = jobClock{}
+		b.mu.Unlock()
 	}
 	path := filepath.Join(b.Cfg.ConfigDir, ".poudrine-pauses")
 	defer func() {
@@ -268,6 +271,11 @@ func (b *Builder) runWorkCommand(ctx context.Context, args []string, stdout, std
 					changeErr = errors.New("changing Poudriere process state failed; retrying")
 				} else {
 					paused = !allowed
+					if bulkName != "" {
+						b.mu.Lock()
+						b.jobClock.mark(paused, monotonicSecond())
+						b.mu.Unlock()
+					}
 					if allowed {
 						since = time.Time{}
 						journal = updated

@@ -181,7 +181,7 @@ func packageFinish(dir *os.Root, origin, pkg string, started time.Time, active b
 // Some machine names cover more than one package architecture. In that case
 // wait for the published package manifest to supply its exact ABI.
 func PackageLogABI(file io.ReaderAt) string {
-	header, _ := io.ReadAll(io.NewSectionReader(file, 0, 4096))
+	header, _ := io.ReadAll(io.NewSectionReader(file, 0, packageLogHeaderSize))
 	for line := range strings.SplitSeq(string(header), "\n") {
 		info, ok := strings.CutPrefix(line, "building for: ")
 		if !ok {
@@ -207,6 +207,8 @@ func PackageLogABI(file io.ReaderAt) string {
 	}
 	return ""
 }
+
+const packageLogHeaderSize = 4096
 
 type packageLogPosition struct{ built, failed packageLogCursor }
 

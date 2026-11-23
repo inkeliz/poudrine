@@ -79,11 +79,12 @@ func ResolvedPorts(cfg config.Builder) map[string]ResolvedPort {
 }
 
 type BuildIssue struct {
-	Package   string `json:"package"`
-	Origin    string `json:"origin"`
-	Phase     string `json:"phase,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-	BlockedBy string `json:"blocked_by,omitempty"`
+	Package      string `json:"package"`
+	Origin       string `json:"origin"`
+	Phase        string `json:"phase,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	BlockedBy    string `json:"blocked_by,omitempty"`
+	BuildSeconds *int64 `json:"build_seconds,omitempty"`
 }
 
 type BuildIssuesView struct {
@@ -101,7 +102,8 @@ type builtPackage struct {
 
 type BuildResultsView struct {
 	BuildIssuesView
-	Succeeded []builtPackage `json:"succeeded"`
+	Succeeded []builtPackage    `json:"succeeded"`
+	Compiled  map[time.Time]int `json:"compiled"`
 }
 
 type BuildLogPage struct {
@@ -245,6 +247,7 @@ func readIssueList(ctx context.Context, run *os.File, name string) ([]BuildIssue
 		}
 		if _, exists := seen[issue]; !exists {
 			seen[issue] = struct{}{}
+			issue.BuildSeconds = packageBuildSeconds(name, entry, fields)
 			items = append(items, issue)
 		}
 		return true
@@ -278,18 +281,15 @@ func runIssues(ctx context.Context, run *os.File) ([]BuildIssue, []BuildIssue, e
 	return failed, skipped, err
 }
 
-func hasBuildIssues(run *os.File) (bool, error) {
+func hasBuildIssues(ctx context.Context, run *os.File) (bool, error) {
 	for _, name := range []string{"failed", "skipped"} {
-		f, info, err := openBuildMetadata(run, "ports."+name)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return false, err
-		}
-		f.Close()
-		if info.Size() > 0 {
-			return true, nil
+		var found bool
+		err := ScanBuildResults(ctx, run, name, func(_ string, fields []string) bool {
+			found = name == "failed" || len(fields) == 3 && packageinfo.ValidIssuePackage(fields[2])
+			return !found
+		})
+		if err != nil || found {
+			return found, err
 		}
 	}
 	return false, nil
@@ -318,10 +318,32 @@ func retainedBuildRuns(ctx context.Context, master *os.File) ([]time.Time, error
 	return runs, nil
 }
 
-func ReadBuildResults(ctx context.Context, cfg config.Builder, started time.Time) (BuildResultsView, error) {
+// Poudriere updates this small counter as packages finish. Older runs and
+// interrupted writes can have a result list with no positive counter yet.
+func compiledRunCount(ctx context.Context, run *os.File) (int, error) {
+	raw, err := diagnosticValue(run, "stats_built", 32)
+	if err != nil {
+		return 0, err
+	}
+	if n, err := strconv.ParseUint(raw, 10, 31); err == nil && n > 0 {
+		return int(n), nil
+	}
+	var seen map[string]struct{}
+	err = ScanBuildResults(ctx, run, "built", func(_ string, fields []string) bool {
+		if seen == nil {
+			seen = make(map[string]struct{})
+		}
+		seen[fields[1]] = struct{}{}
+		return true
+	})
+	return len(seen), err
+}
+
+func ReadBuildResults(ctx context.Context, cfg config.Builder, started time.Time, hideEmpty bool) (BuildResultsView, error) {
 	view := BuildResultsView{
 		BuildIssuesView: BuildIssuesView{Runs: []time.Time{}, Failed: []BuildIssue{}, Skipped: []BuildIssue{}},
 		Succeeded:       []builtPackage{},
+		Compiled:        make(map[time.Time]int),
 	}
 	master, err := openBuildMaster(cfg)
 	if errors.Is(err, os.ErrNotExist) && started.IsZero() {
@@ -331,46 +353,77 @@ func ReadBuildResults(ctx context.Context, cfg config.Builder, started time.Time
 		return view, err
 	}
 	defer master.Close()
-	view.Runs, err = retainedBuildRuns(ctx, master)
+	runs, err := retainedBuildRuns(ctx, master)
 	if err != nil {
 		return view, err
 	}
-	// Read only the selected run's lists. New, successful and no-work runs
-	// all take precedence over older failures when following the latest run.
-	for len(view.Runs) > 0 {
-		chosen := started
-		if chosen.IsZero() {
-			chosen = view.Runs[0]
+	for _, stamp := range runs {
+		if err := ctx.Err(); err != nil {
+			return view, err
 		}
-		run, err := OpenLogPath(master, chosen.UTC().Format(BuildNameFormat), true)
-		if started.IsZero() && errors.Is(err, os.ErrNotExist) {
-			view.Runs = view.Runs[1:] // Pruned since readdir.
+		selected := stamp.Equal(started) || started.IsZero() && view.Started.IsZero()
+		run, err := OpenLogPath(master, stamp.Format(BuildNameFormat), true)
+		if errors.Is(err, os.ErrNotExist) {
+			continue // Pruned since readdir.
+		}
+		if err != nil {
+			if selected {
+				return view, err
+			}
+			view.Runs = append(view.Runs, stamp)
 			continue
 		}
-		if err != nil {
-			return view, err
-		}
-		defer run.Close()
-		view.Started = chosen.UTC()
-		view.Failed, view.Skipped, err = runIssues(ctx, run)
-		if err != nil {
-			return view, err
-		}
-		seen := make(map[string]bool)
-		err = ScanBuildResults(ctx, run, "built", func(line string, fields []string) bool {
-			pkg := fields[1]
-			if !seen[pkg] {
-				seen[pkg] = true
-				view.Succeeded = append(view.Succeeded, builtPackage{Origin: fields[0], Package: pkg, BuildSeconds: packageBuildSeconds("built", line, fields)})
+		var count int
+		var empty bool
+		if selected {
+			err = view.readPackages(ctx, run)
+			count = len(view.Succeeded)
+			empty = count+len(view.Failed)+len(view.Skipped) == 0
+		} else {
+			count, err = compiledRunCount(ctx, run)
+			if err == nil && hideEmpty && count == 0 {
+				var issues bool
+				issues, err = hasBuildIssues(ctx, run)
+				empty = !issues
 			}
-			return true
-		})
-		return view, err
+		}
+		run.Close()
+		if selected && err != nil {
+			return view, err
+		}
+		if err == nil {
+			if hideEmpty && empty {
+				continue
+			}
+			view.Compiled[stamp] = count
+		}
+		// Keep unselected runs with unreadable metadata available to inspect.
+		view.Runs = append(view.Runs, stamp)
+		if selected {
+			view.Started = stamp
+		}
 	}
-	if !started.IsZero() {
+	if !started.IsZero() && view.Started.IsZero() {
 		return view, os.ErrNotExist
 	}
-	return view, nil
+	return view, ctx.Err()
+}
+
+func (view *BuildResultsView) readPackages(ctx context.Context, run *os.File) error {
+	var err error
+	view.Failed, view.Skipped, err = runIssues(ctx, run)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool)
+	return ScanBuildResults(ctx, run, "built", func(line string, fields []string) bool {
+		pkg := fields[1]
+		if !seen[pkg] {
+			seen[pkg] = true
+			view.Succeeded = append(view.Succeeded, builtPackage{Origin: fields[0], Package: pkg, BuildSeconds: packageBuildSeconds("built", line, fields)})
+		}
+		return true
+	})
 }
 
 // Older Management clients use this endpoint to find their latest failure.
@@ -406,7 +459,7 @@ func ReadBuildIssues(ctx context.Context, cfg config.Builder, started time.Time)
 			}
 			continue
 		}
-		issues, err := hasBuildIssues(run)
+		issues, err := hasBuildIssues(ctx, run)
 		selected := t.Equal(started) || (started.IsZero() && view.Started.IsZero() && issues)
 		if err == nil && selected {
 			view.Failed, view.Skipped, err = runIssues(ctx, run)

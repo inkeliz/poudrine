@@ -1,1 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><rect width="48" height="48" rx="12" fill="#fceeee"/><g transform="translate(12 12)" fill="none" stroke="#c62828" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="6" rx="1"/><path d="M12 8v5M5 16v-3h14v3"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+  <title id="title">Dependency inventory</title>
+  <rect x="6" y="6" width="39" height="39" fill="#080907" stroke="#8b8c7e" stroke-width="2"/>
+  <rect x="2" y="2" width="40" height="40" fill="#ff714e" stroke="#080907" stroke-width="3"/>
+  <path fill="none" stroke="#080907" stroke-width="2.5" d="M22 17v5m-9 6v-6h18v6"/>
+  <path fill="#080907" d="M16 9h12v9H16z"/>
+  <path fill="none" stroke="#080907" stroke-width="2.5" d="M9 27h8v7H9zm18 0h8v7h-8z"/>
+</svg>

@@ -11,9 +11,11 @@ import (
 	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/inkeliz/poudrine/internal/statusproto"
+	webtheme "github.com/inkeliz/poudrine/internal/web"
 	"github.com/inkeliz/poudrine/internal/weblocale"
 	"golang.org/x/net/netutil"
 	"golang.org/x/sys/unix"
@@ -35,7 +37,8 @@ type statusHandler struct{ fd int }
 func (h *statusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
-	if r.URL.Path != "/" && r.URL.Path != "/status.json" && r.URL.Path != "/index.html" {
+	font := strings.HasPrefix(r.URL.Path, "/fonts/")
+	if !font && r.URL.Path != "/" && r.URL.Path != "/status.json" && r.URL.Path != "/index.html" {
 		http.NotFound(w, r)
 		return
 	}
@@ -46,6 +49,10 @@ func (h *statusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if font {
+		webtheme.ServeFont(w, r)
 		return
 	}
 	s, available := readCounts(h.fd)
@@ -63,7 +70,7 @@ func (h *statusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 	case available:
 		body, _ = json.Marshal(s) // Two integers always marshal.
 		body = append(body, '\n')

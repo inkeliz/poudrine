@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/logo.svg" alt="Poudrine logo" width="78" height="90">
+  <img src="docs/images/logo.svg" alt="Poudrine logo" width="84" height="84">
 </p>
 
 # Poudrine
@@ -106,10 +106,6 @@ Run `pkg install` and `pkg upgrade` as usual. Poudrine offers the newer package 
 
 In the background, Poudriere builds tracked ports and publishes ready packages as their dependencies become available. Packages with custom build options use matching local builds only.
 
-![Poudrine Management dashboard showing live builds, running packages, and build history](docs/images/management-screenshot.png)
-
-*Management dashboard with example data.*
-
 ## Get started
 
 Use a **FreeBSD/amd64 RELEASE host** with jail support and space for ports, builds and packages. Run the server commands below as **root in a `sh` shell** on a fresh installation.
@@ -164,13 +160,17 @@ Compare the certificate’s SHA-256 fingerprint with the server output before ac
 
 ### 5. Connect your VMs
 
-Click the website’s **Client setup** tab, then **Copy setup commands**. Paste them into a **root `sh` shell on each FreeBSD VM**. You can then use `pkg install` and `pkg upgrade` as usual. FreeBSD continues to provide OS updates.
+Click the website’s **Client** tab, then **Copy setup commands**. Paste them into a **root `sh` shell on each FreeBSD VM**. You can then use `pkg install` and `pkg upgrade` as usual. FreeBSD continues to provide OS updates.
+
+![Client page showing catalog counts, setup commands, and repository files for a sample installation](docs/images/client-setup-screenshot.png)
 
 See the [installation guide](docs/installation.md) for custom listeners, SSH access and source builds.
 
 ## Operate the service
 
 Use **Management** to monitor builds, browse package inventory and see client activity. Open **Service settings → Poudriere builds** to customize packages, set working hours and adjust parallel builds.
+
+![Management dashboard showing busy and idle package builders, a selected day’s results and the package list for one build run](docs/images/management-screenshot.png)
 
 - **Troubleshoot:** inspect build logs and retry failed packages with their dependents.
 - **Upgrade:** install the new binaries, then run `service poudrine restart`. Supported supervisors preserve the active build; older installations need a one-time stop/start.

@@ -3,19 +3,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#151615">
   <meta http-equiv="Content-Security-Policy" content="form-action 'none'">
   <title>Management · Poudrine</title>
   <link rel="stylesheet" href="style.css">
   <script src="poudrine.js" defer></script>
 </head>
-<body data-enrolled="{{.Enrolled}}">
+<body class="management-page" data-enrolled="{{.Enrolled}}">
 <a class="skip" href="#main">Skip to content</a>
 <header class="site-head">
   <div class="bar">
     <a class="brand" href="./"><span class="brand-mark" aria-hidden="true"></span>Poudrine</a>
-    <nav aria-label="Main"><a href="./">Client setup</a><a href="admin" aria-current="page">Management</a></nav>
+    <nav aria-label="Main"><a href="./">Client</a><a href="admin" aria-current="page">Management</a></nav>
   </div>
 </header>
+<div class="management-layout">
+  <nav id="dashboard-links" class="dashboard-links" aria-label="Management sections" hidden>
+    <a href="#build" title="Build activity"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 12h5l3-8 4 16 3-8h5"/></svg><span>Build activity</span></a>
+    <a href="#history-heading" title="Build history"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 4v5h5M3.5 9a9 9 0 1 1 .6 8M12 7v5l4 2"/></svg><span>History</span></a>
+    <a href="#packages-title" title="Package inventory"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 2 9 5v10l-9 5-9-5V7zM3 7l9 5 9-5m-9 5v10M7.5 4.5l9 5"/></svg><span>Packages</span></a>
+    <a href="#clients-title" title="Repository clients"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 4h13v10H2zM5 18h7m-3-4v4m9-11h4v12h-7v-2"/></svg><span>Clients</span></a>
+    <a href="#settings-form" title="Service settings"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h5m5 0h8M3 17h11m5 0h2M8 3h5v6H8zM14 14h5v6h-5z"/></svg><span>Settings</span></a>
+  </nav>
 <main id="main">
   <div class="management-head">
     <div class="management-title">
@@ -30,7 +40,7 @@
   <noscript>Enable JavaScript to use the signed management API.</noscript>
   <section id="enrollment" class="access-panel" aria-labelledby="enrollment-heading" hidden>
     <header class="access-intro">
-      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="key-stamp" aria-hidden="true"></span>
       <h2 id="enrollment-heading">Create your administrator key</h2>
       <p>Use the token from your FreeBSD server to enroll this repository. Your browser will generate your sign-in key.</p>
     </header>
@@ -43,7 +53,7 @@
   </section>
   <section id="key-backup" class="access-panel" aria-labelledby="backup-heading" hidden>
     <header class="access-intro">
-      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="key-stamp" aria-hidden="true"></span>
       <h2 id="backup-heading">Save your private key</h2>
       <p>Copy this key into your password manager or a private backup. Anyone with a copy can manage this repository.</p>
     </header>
@@ -56,7 +66,7 @@
   </section>
   <section id="signin" class="access-panel" aria-labelledby="signin-heading" hidden>
     <header class="access-intro">
-      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="key-stamp" aria-hidden="true"></span>
       <h2 id="signin-heading">Administrator sign-in</h2>
       <p id="signin-help">Use the key you saved during setup. Your browser signs requests locally until you sign out or reload.</p>
     </header>
@@ -76,7 +86,7 @@
         <div class="build-actions"><button id="refresh" type="button">Refresh</button><button id="force-build" type="button" class="primary" disabled>Run build now</button></div>
       </div>
       <div class="build-columns">
-        <div>
+        <div class="current-build">
           <p class="build-state"><span aria-hidden="true"></span><strong id="build-state">Checking worker…</strong></p>
           <p id="build-message" class="build-description"></p>
           <div id="build-progress-group" hidden>
@@ -84,7 +94,6 @@
             <progress id="build-progress" max="1"></progress>
             <p id="package-counts"></p>
           </div>
-          <dl id="build-facts" class="build-facts"></dl>
         </div>
         <div class="next-build">
           <h3 id="next-build-heading">Next build</h3>
@@ -92,26 +101,20 @@
           <p id="next-build-detail"></p>
         </div>
       </div>
+      <dl id="build-facts" class="build-facts"></dl>
       <section id="active-jobs" aria-labelledby="job-heading" hidden>
-        <h3 id="job-heading">Running packages</h3>
-        <ul id="build-jobs"></ul>
+        <h3 id="job-heading">Compiling packages <small id="job-count"></small></h3>
+        <nav id="builder-pages" class="inventory-pages" aria-label="Package builder pages" hidden>
+          <span id="builder-range" role="status"></span>
+          <button type="button" id="builder-previous" aria-label="Previous builder page" aria-controls="build-jobs">Previous</button>
+          <label>Page <input id="builder-page" type="number" min="1" step="1" value="1" aria-controls="build-jobs"></label>
+          <button type="button" id="builder-next" aria-label="Next builder page" aria-controls="build-jobs">Next</button>
+        </nav>
+        <ul id="build-jobs" aria-labelledby="job-heading"></ul>
       </section>
       <p id="worker-mode" class="build-feedback" hidden>Manual builds are available when the Poudrine service runs the build worker.</p>
       <p id="build-feedback" class="build-feedback" role="status" hidden></p>
       <p id="build-poll-error" class="build-feedback" role="status" hidden></p>
-      <details id="build-results">
-        <summary>Build run history</summary>
-        <div class="result-toolbar">
-          <label>Build run<select id="result-run"><option value="">Latest run</option></select></label>
-          <label>Result<select id="result-filter"><option value="all">All packages</option><option value="succeeded">Built</option><option value="failed">Failed</option><option value="skipped">Skipped</option></select></label>
-          <button type="button" id="result-refresh">Refresh results</button>
-          <button type="button" id="result-retry-all" hidden>Retry all affected packages</button>
-        </div>
-        <p id="result-status" role="status"></p>
-        <ul id="result-list" aria-label="Package results"></ul>
-        <button type="button" id="result-more" hidden>Show more packages</button>
-        <p id="result-feedback" role="status"></p>
-      </details>
       <details id="build-log" hidden><summary>Worker output</summary><pre id="build-log-text" tabindex="0" aria-label="Worker output"></pre></details>
     </section>
     <section class="panel build-history" aria-labelledby="history-heading">
@@ -129,19 +132,61 @@
             <li><i class="failed" aria-hidden="true"></i>Failed <b id="total-failed"></b></li>
           </ul>
         </div>
-        <div class="history-plot" role="img" id="history-plot" aria-label="Package build history chart">
+        <p id="history-chart-help">Click a bar to see its packages. Use the arrow keys to move and Enter or Space to select.</p>
+        <div class="history-plot" role="group" id="history-plot" aria-label="Package build history chart">
           <div class="chart-scale" aria-hidden="true"><span id="chart-max"></span><span id="chart-mid"></span><span>{{.Locale.Sprint 0}}</span></div>
-          <svg class="chart-bars" id="chart-bars" preserveAspectRatio="none" aria-hidden="true" focusable="false"></svg>
+          <svg class="chart-bars" id="chart-bars" preserveAspectRatio="none" role="group" aria-label="Build periods in UTC" aria-describedby="history-chart-help"></svg>
           <div class="chart-ticks" id="chart-ticks" aria-hidden="true"></div>
+          <section class="history-period" id="history-period" aria-labelledby="history-period-title" hidden>
+            <div class="history-period-head">
+              <h3 id="history-period-title"></h3>
+              <button id="history-period-close" type="button" aria-label="Close period details">Close</button>
+            </div>
+            <p id="history-period-summary"></p>
+            <ul id="history-period-results"></ul>
+            <p id="history-period-status" role="status"></p>
+            <button id="history-period-more" type="button" hidden>Show more packages</button>
+          </section>
         </div>
         <p id="history-empty" hidden>No package builds finished during this period.</p>
         <details id="history-recent" class="history-values" hidden>
           <summary>Recent package builds <span id="history-recent-count"></span></summary>
-          <div class="table-scroll"><table aria-label="Recent package build results"><thead><tr><th scope="col">Package and version</th><th scope="col">Result</th><th scope="col">Finished (UTC)</th></tr></thead><tbody id="history-recent-values"></tbody></table></div>
+          <div class="table-scroll"><table aria-label="Recent package build results"><thead><tr><th scope="col">Package and version</th><th scope="col">Result</th><th scope="col">Finished (UTC)</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead><tbody id="history-recent-values"></tbody></table></div>
         </details>
-        <details id="history-table-wrap" class="history-values"><summary>View counts by period (UTC)</summary><div class="table-scroll"><table aria-label="Package builds by period in UTC"><thead><tr><th scope="col">Period (UTC)</th><th scope="col">Built</th><th scope="col">Failed</th></tr></thead><tbody id="history-values"></tbody></table></div></details>
       </div>
       <div class="history-feedback"><p id="history-message" role="status">Loading build history…</p><button id="history-retry" type="button" hidden>Retry</button></div>
+      <details id="build-results">
+        <summary>Build run history</summary>
+        <div class="result-body">
+          <div class="run-toolbar">
+            <div class="run-picker">
+              <label for="result-run">Build run</label>
+              <div class="run-controls">
+                <button id="result-older" type="button" aria-label="Older build run" title="Older build run" disabled>←</button>
+                <select id="result-run" disabled><option value="">Latest run</option></select>
+                <button id="result-newer" type="button" aria-label="Newer build run" title="Newer build run" disabled>→</button>
+              </div>
+            </div>
+            <fieldset class="run-visibility">
+              <legend>Show runs</legend>
+              <div class="interval-control">
+                <label><input class="visually-hidden" type="radio" id="result-all-runs" name="result-runs" checked>All runs</label>
+                <label title="Runs with built, failed or skipped packages"><input class="visually-hidden" type="radio" id="result-hide-empty" name="result-runs">With results</label>
+              </div>
+            </fieldset>
+          </div>
+          <div id="result-filter" class="interval-control" role="group" aria-label="Package results for this run">
+            <button type="button" data-outcome="all" aria-controls="result-list" aria-pressed="true">All</button>
+            <button type="button" data-outcome="succeeded" aria-controls="result-list" aria-pressed="false"><span>—</span> Succeeded</button>
+            <span class="result-segment"><button type="button" data-outcome="failed" aria-controls="result-list" aria-pressed="false"><span>—</span> Failed</button></span>
+            <span class="result-segment"><button type="button" data-outcome="skipped" aria-controls="result-list" aria-pressed="false"><span>—</span> Skipped</button></span>
+          </div>
+          <p id="result-status" role="status"></p>
+          <ul id="result-list" aria-label="Package results" tabindex="0"></ul>
+          <button type="button" id="result-more" hidden>Show more packages</button>
+          <p id="result-feedback" role="status"></p>
+        </div>
+      </details>
     </section>
     <details id="settings" class="panel settings-panel">
       <summary>Service settings</summary>
@@ -271,7 +316,7 @@
     <section class="panel inventory" aria-labelledby="packages-title">
       <h2 id="packages-title">Package inventory</h2>
       <dl class="inventory-metrics">
-        <div><dt>Tracked origins</dt><dd id="inventory-origin-count">—</dd></div>
+        <div><dt>Tracked ports</dt><dd id="inventory-origin-count">—</dd></div>
         <div>
           <dt>Compiled archives</dt><dd id="inventory-compiled-count">—</dd>
           <dd class="inventory-metric-detail">Archive size <span id="inventory-compiled-size">—</span></dd>
@@ -336,6 +381,7 @@
     </section>
   </div>
 </main>
+</div>
 <dialog id="client-dialog" aria-labelledby="client-dialog-title" aria-describedby="client-dialog-note">
   <div class="panel-heading">
     <div><h2 id="client-dialog-title">Client packages</h2><p id="client-ip"></p></div>
@@ -357,6 +403,16 @@
     <button type="button" id="client-packages-next" aria-label="Next client package page">Next</button>
   </div>
 </dialog>
+<template id="package-retry-action">
+  <button type="button" data-retry>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 4v6h-6M20 10a8 8 0 1 0 0 5"/></svg>
+  </button>
+</template>
+<template id="package-log-action">
+  <button type="button" class="log-button" aria-haspopup="dialog" aria-controls="package-log-dialog">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 2.5h9l5 5v14H5zM14 2.5v5h5M8 11h8M8 14.5h8M8 18h5"/></svg>
+  </button>
+</template>
 <dialog id="package-log-dialog" aria-labelledby="package-log-title" aria-describedby="package-log-info">
   <div class="panel-heading"><h2 id="package-log-title">Package build log</h2><button type="button" id="close-package-log" autofocus>Close</button></div>
   <p id="package-log-info"></p>

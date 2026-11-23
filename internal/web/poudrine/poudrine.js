@@ -13,7 +13,6 @@ function pageFormats(locale) {
   const percent = new Intl.NumberFormat(locale, {style: "percent", maximumFractionDigits: 1}).format;
   const relative = new Intl.RelativeTimeFormat(locale, {numeric: "auto"});
   const list = new Intl.ListFormat(locale, {type: "unit", style: "short"});
-  const names = new Intl.ListFormat(locale);
   const collate = new Intl.Collator(locale, {numeric: true});
   const units = new Map();
   function unit(value, name, width = "short") {
@@ -23,7 +22,7 @@ function pageFormats(locale) {
     }
     return units.get(key).format(value);
   }
-  return {locale, number, percent, relative, list, names, collate, unit};
+  return {locale, number, percent, relative, list, collate, unit};
 }
 
 function serverTime(stamp, options) {
@@ -216,6 +215,13 @@ async function readBuildEvents(response, onBuild) {
   } finally { reader.releaseLock(); }
 }
 
+function focusRunningLog(button) {
+  const list = el("build-jobs");
+  const current = list.querySelector('[data-log-job="' + CSS.escape(button.dataset.logJob) + '"][data-log-run="' + CSS.escape(button.dataset.logRun) + '"]');
+  const slot = list.querySelector('[data-builder="' + CSS.escape(button.dataset.builder) + '"]');
+  (current || slot || el("refresh")).focus({preventScroll: true});
+}
+
 function createBuildResults(request, el, node) {
   // Worker timestamps can have a UTC offset. Keep nanoseconds when matching
   // them to Poudriere's UTC run names, even though Date displays milliseconds.
@@ -227,31 +233,35 @@ function createBuildResults(request, el, node) {
   }
 
   const panel = el("build-results"), selector = el("result-run"), list = el("result-list");
-  const filter = el("result-filter"), more = el("result-more");
-  const status = el("result-status"), feedback = el("result-feedback"), retryAll = el("result-retry-all");
+  const older = el("result-older"), newer = el("result-newer"), hideEmpty = el("result-hide-empty");
+  const filters = el("result-filter").querySelectorAll("[data-outcome]"), groupRetries = [];
+  const status = el("result-status"), feedback = el("result-feedback"), more = el("result-more");
   const dialog = el("package-log-dialog"), output = el("package-log-output"), earlier = el("package-log-earlier");
   const runDate = new Intl.DateTimeFormat(display.locale, {dateStyle: "medium", timeStyle: "long"});
   let view, selected = "", listVersion = 0, focusPackage, worker, submitting = false, retryVersion = 0;
-  let entries = [], visible = [], shown = 0;
+  let entries = [], visible = [], shown = 0, selectedOutcome = "all";
   const outcomes = {succeeded: "Built", failed: "Failed", skipped: "Skipped"};
   const pageSize = 50;
   const latest = el("package-log-latest");
-  let logArgs, logStart, logVersion = 0;
+  let logArgs, logStart, logTrigger, logVersion = 0;
 
   function retryControls() {
-    retryAll.disabled = submitting || !worker?.can_force;
-    for (const button of list.querySelectorAll("[data-retry]")) button.disabled = retryAll.disabled;
+    const disabled = submitting || !worker?.can_force;
+    for (const button of groupRetries) {
+      button.disabled = disabled || !view?.started || !view[button.dataset.retryOutcome]?.length;
+    }
+    for (const button of list.querySelectorAll("[data-retry]")) button.disabled = disabled;
   }
 
-  async function retry(started, pkg) {
+  async function retry(args) {
     if (submitting || !worker?.can_force) return;
     submitting = true;
     const version = retryVersion;
+    const started = args.started;
     retryControls();
-    const target = pkg || "all affected packages";
+    const target = args.package || args.outcome + " packages";
     feedback.textContent = "Queuing " + target + "…";
     try {
-      const args = pkg ? {started, package: pkg} : {started};
       const reply = await request("/api/admin/build/retry", "POST", args);
       if (!reply.queued) throw new Error("The worker did not accept the retry.");
       if (version !== retryVersion || view?.started !== started || !panel.open) return;
@@ -263,6 +273,25 @@ function createBuildResults(request, el, node) {
       submitting = false;
       retryControls();
     }
+  }
+
+  function retryButton(label, onClick) {
+    const button = el("package-retry-action").content.firstElementChild.cloneNode(true);
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.onclick = onClick;
+    button.disabled = submitting || !worker?.can_force;
+    return button;
+  }
+
+  for (const segment of el("result-filter").querySelectorAll(".result-segment")) {
+    const outcome = segment.firstElementChild.dataset.outcome;
+    const button = retryButton("Retry all " + outcome + " packages in this run", () => {
+      if (view?.started) return retry({started: view.started, outcome});
+    });
+    button.dataset.retryOutcome = outcome;
+    groupRetries.push(button);
+    segment.append(button);
   }
 
   async function loadLog(fromEnd = false) {
@@ -292,7 +321,8 @@ function createBuildResults(request, el, node) {
     }
   }
 
-  function showLog(started, pkg, phase) {
+  function showLog(started, pkg, phase, trigger) {
+    logTrigger = trigger;
     logArgs = {started, package: pkg.package};
     logStart = undefined;
     output.replaceChildren();
@@ -309,72 +339,89 @@ function createBuildResults(request, el, node) {
   dialog.addEventListener("close", () => {
     if (dialog.open) return;
     ++logVersion;
-    logArgs = undefined;
+    // Live job updates can replace the button while its dialog is open.
+    if (logTrigger?.dataset.logJob && !logTrigger.isConnected) focusRunningLog(logTrigger);
+    logArgs = logTrigger = undefined;
     output.replaceChildren();
   });
 
-  function makeAction(label, action) {
-    const button = node("button", label);
-    button.type = "button";
-    button.onclick = action;
+  function logButton(started, pkg, phase, button = el("package-log-action").content.firstElementChild.cloneNode(true)) {
+    button.title = "View build log for " + pkg.package;
+    button.setAttribute("aria-label", button.title);
+    button.onclick = () => showLog(started, pkg, phase, button);
     return button;
+  }
+
+  function dependencyList(summary, packages, describe) {
+    const details = document.createElement("details"), list = document.createElement("ul");
+    details.className = "result-deps";
+    details.append(node("summary", summary), list);
+    details.addEventListener("toggle", () => {
+      if (details.open && !list.childElementCount) {
+        const rows = document.createDocumentFragment();
+        for (const pkg of packages) rows.append(node("li", describe(pkg)));
+        list.append(rows);
+      }
+    });
+    return details;
   }
 
   function resultRow({pkg, outcome, children, blockers}) {
     const started = view.started;
     const item = document.createElement("li");
+    item.className = "result-row";
     item.tabIndex = -1;
     item.dataset.package = pkg.package;
-    const row = document.createElement("div"), name = document.createElement("div"), actions = document.createElement("div");
-    row.className = "result-row";
-    name.className = "result-name";
+    const state = document.createElement("div"), name = document.createElement("div");
+    state.className = "result-state";
     const label = node("span", outcomes[outcome]);
     label.className = "result-outcome";
     label.dataset.outcome = outcome;
-    name.append(label, node("strong", pkg.origin), node("small", pkg.package));
-    const detail = outcome === "failed" ? [pkg.phase && "Phase " + pkg.phase, pkg.reason].filter(Boolean).join(" · ") :
-      outcome === "skipped" ? (blockers.length ? "Blocked by " + display.names.format(blockers) : "") :
-      Number.isFinite(pkg.build_seconds) ? "Built in " + buildDuration(pkg.build_seconds) : "";
-    if (detail) {
-      const reason = node("p", detail);
-      reason.className = "result-reason";
-      name.append(reason);
+    state.append(label);
+    if (Number.isFinite(pkg.build_seconds)) {
+      const time = node("small", buildDuration(pkg.build_seconds));
+      time.title = "Build time: " + buildDuration(pkg.build_seconds, "long");
+      state.append(time);
     }
+    name.className = "result-name";
+    name.append(node("strong", pkg.origin), node("small", pkg.package));
+    item.append(state, name);
+    const actions = document.createElement("div");
     actions.className = "result-actions";
-    if (outcome !== "skipped") {
-      const log = makeAction("View log", () => showLog(started, pkg, [outcomes[outcome], pkg.phase].filter(Boolean).join(" · ")));
-      log.setAttribute("aria-label", "View build log for " + pkg.package);
-      actions.append(log);
-    }
     if (outcome !== "succeeded") {
-      const button = makeAction(children?.length ? "Retry with dependents" : "Retry package", () => retry(started, pkg.package));
-      button.dataset.retry = "";
-      button.disabled = submitting || !worker?.can_force;
-      actions.append(button);
-    }
-    row.append(name, actions);
-    item.append(row);
-    if (children?.length) {
-      const deps = document.createElement("details"), packages = document.createElement("ul");
-      deps.className = "result-deps";
-      deps.append(node("summary", "Skipped dependents (" + display.number(children.length) + ")"));
-      function showDependents() {
-        if (!deps.open || packages.childElementCount) return;
-        const rows = document.createDocumentFragment();
-        for (const child of children) rows.append(node("li", child.origin + " · " + child.package));
-        packages.append(rows);
+      const detail = document.createElement("div");
+      detail.className = "result-detail";
+      if (outcome === "failed") {
+        const reason = [pkg.phase && "Phase " + pkg.phase, pkg.reason].filter(Boolean).join(" · ");
+        if (reason) detail.append(node("p", reason));
+        if (children?.length) detail.append(dependencyList("Skipped dependents (" + display.number(children.length) + ")",
+          children, child => child.origin + " · " + child.package));
+      } else if (blockers.length === 1) {
+        detail.append(node("p", "Blocked by " + blockers[0]));
+      } else if (blockers.length > 1) {
+        detail.append(dependencyList("Blocked by " + display.number(blockers.length) + " packages", blockers, name => name));
       }
-      deps.addEventListener("toggle", showDependents);
-      deps.append(packages);
-      item.append(deps);
+      if (detail.childElementCount) item.append(detail);
+      actions.append(retryButton("Retry " + pkg.package + (children?.length ? " with dependents" : ""),
+        () => retry({started, package: pkg.package})));
     }
+    if (outcome !== "skipped") actions.append(logButton(started, pkg, [outcomes[outcome], pkg.phase].filter(Boolean).join(" · ")));
+    item.append(actions);
     return item;
   }
 
-  function runOption(started) {
-    const option = node("option", started ? runDate.format(new Date(started)) : "Latest run");
+  function runOption(started, count, latest = false) {
+    const label = started ? [latest ? "Latest" : "", runDate.format(new Date(started)),
+      Number.isFinite(count) ? display.number(count) + " compiled" : "Count unavailable"].filter(Boolean).join(" · ") : "No runs";
+    const option = node("option", label);
     option.value = started;
     return option;
+  }
+
+  function updateNavigation() {
+    const index = selector.selectedIndex;
+    newer.disabled = index <= 0;
+    older.disabled = index < 0 || index >= selector.options.length - 1;
   }
 
   function showMore(count = pageSize) {
@@ -386,7 +433,7 @@ function createBuildResults(request, el, node) {
   }
 
   function renderPackages(limit = pageSize) {
-    visible = filter.value === "all" ? entries : entries.filter(entry => entry.outcome === filter.value);
+    visible = selectedOutcome === "all" ? entries : entries.filter(entry => entry.outcome === selectedOutcome);
     list.replaceChildren();
     shown = 0;
     if (focusPackage) {
@@ -397,19 +444,38 @@ function createBuildResults(request, el, node) {
     if (!visible.length && entries.length) list.append(node("li", "No packages with this result in this run."));
   }
   more.onclick = () => showMore();
-  filter.onchange = () => { focusPackage = undefined; renderPackages(); };
+
+  function selectOutcome(outcome) {
+    selectedOutcome = outcome;
+    for (const button of filters) button.setAttribute("aria-pressed", button.dataset.outcome === outcome);
+  }
+  for (const button of filters) {
+    button.onclick = () => {
+      selectOutcome(button.dataset.outcome);
+      focusPackage = undefined;
+      if (view) renderPackages();
+      refresh();
+    };
+  }
+
+  function showCounts(counts) {
+    for (const button of filters) {
+      const count = button.firstElementChild;
+      if (count) count.textContent = counts ? display.number(counts[button.dataset.outcome]) : "—";
+    }
+  }
 
   function render(data) {
     const runs = data.runs || [];
     const options = document.createDocumentFragment();
-    options.append(runOption(""));
-    if (selected && !runs.includes(selected)) options.append(runOption(selected));
-    for (const start of runs) options.append(runOption(start));
+    for (const start of runs) options.append(runOption(start, data.compiled?.[start], start === runs[0]));
+    if (!runs.length) options.append(runOption(""));
     selector.replaceChildren(options);
-    selector.value = selected;
+    selector.value = data.started || "";
+    selector.disabled = !runs.length;
+    updateNavigation();
 
     const started = data.started;
-    const current = worker?.active && runInstant(worker.started) === runInstant(started);
     const completed = data.succeeded || [], failures = data.failed || [];
     const skipped = new Map(), blocked = new Map();
     for (const pkg of data.skipped || []) {
@@ -431,17 +497,14 @@ function createBuildResults(request, el, node) {
     ];
     entries.sort((a, b) => display.collate.compare(a.pkg.package, b.pkg.package));
     renderPackages(Math.max(shown, pageSize));
-    retryAll.hidden = !failures.length && !skipped.size;
+    showCounts(started && {succeeded: completed.length, failed: failures.length, skipped: skipped.size});
     retryControls();
     if (!started) {
-      status.textContent = "No build runs are available yet.";
+      status.textContent = hideEmpty.checked ? "No runs have package results. Choose All runs to include empty runs." : "No build runs are available yet.";
       return;
     }
-    const newest = !selected || runs[0] === started && runInstant(started) >= runInstant(worker?.started);
-    const run = (current ? "Current run" : newest ? "Latest run" : "Previous run") + " · " + runDate.format(new Date(started));
-    status.textContent = entries.length
-      ? [run, display.number(completed.length) + " built", display.number(failures.length) + " failed", display.number(skipped.size) + " skipped"].join(" · ")
-      : run + (current ? " · Waiting for package results." : " · No package results were recorded.");
+    const active = worker?.active && runInstant(worker.started) === runInstant(started);
+    status.textContent = entries.length ? "" : active ? "Waiting for package results." : "No package results were recorded.";
   }
 
   async function refresh() {
@@ -449,12 +512,16 @@ function createBuildResults(request, el, node) {
     const version = ++listVersion;
     if (!view) status.textContent = "Loading build results…";
     try {
-      let data = await request("/api/admin/build/results", "QUERY", selected ? {started: selected} : {});
+      const args = selected ? {started: selected} : {};
+      if (hideEmpty.checked) args.hide_empty = true;
+      let data = await request("/api/admin/build/results", "QUERY", args);
       if (version !== listVersion || !panel.open) return;
       // A new run may have no Poudriere log directory yet. Link the
       // older retained runs in the selector while the latest one is empty.
-      if (!selected && runInstant(worker?.started) > runInstant(data.started)) {
-        data = {started: worker.started, runs: data.runs};
+      if (!hideEmpty.checked && runInstant(worker?.started) > runInstant(data.runs?.[0])) {
+        if (!selected) data = {started: worker.started, runs: data.runs, compiled: data.compiled};
+        data.runs = [worker.started, ...(data.runs || [])];
+        data.compiled = {...data.compiled, [worker.started]: 0};
       }
       if (selected) selected = data.started || selected;
       if (view?.started !== data.started) {
@@ -482,7 +549,9 @@ function createBuildResults(request, el, node) {
     entries = visible = [];
     shown = 0;
     list.replaceChildren();
-    retryAll.hidden = more.hidden = true;
+    more.hidden = true;
+    showCounts();
+    retryControls();
     status.textContent = feedback.textContent = "";
   }
 
@@ -492,24 +561,35 @@ function createBuildResults(request, el, node) {
     if (selected && !Array.from(selector.options).some(option => option.value === selected)) {
       selector.add(runOption(started));
     }
-    selector.value = selected;
+    selector.value = selected || selector.options[0]?.value || "";
+    updateNavigation();
     if (!panel.open) panel.open = true;
     else refresh();
   }
   selector.onchange = () => {
     focusPackage = undefined;
-    filter.value = "all";
-    chooseRun(selector.value);
+    selectOutcome("all");
+    chooseRun(selector.selectedIndex === 0 ? "" : selector.value);
   };
+  function stepRun(offset) {
+    selector.selectedIndex += offset;
+    selector.onchange();
+  }
+  older.onclick = () => stepRun(1);
+  newer.onclick = () => stepRun(-1);
+  for (const radio of [hideEmpty, el("result-all-runs")]) {
+    radio.onchange = () => {
+      focusPackage = undefined;
+      chooseRun(hideEmpty.checked && !entries.length ? "" : selected);
+    };
+  }
   panel.addEventListener("toggle", () => { if (panel.open) refresh(); });
-  el("result-refresh").onclick = refresh;
-  retryAll.onclick = () => { if (view?.started) return retry(view.started); };
 
   return {
-    showLog,
+    logButton,
     reveal(started, pkg) {
       focusPackage = pkg;
-      filter.value = "failed";
+      selectOutcome("failed");
       chooseRun(started);
     },
     update(build) {
@@ -532,16 +612,160 @@ function createBuildResults(request, el, node) {
       panel.open = false;
       focusPackage = worker = undefined;
       selected = "";
-      filter.value = "all";
+      selectOutcome("all");
+      el("result-all-runs").checked = true;
       clearResults();
       selector.replaceChildren(runOption(""));
-      status.textContent = feedback.textContent = "";
+      selector.disabled = true;
+      updateNavigation();
+    }
+  };
+}
+
+function createHistoryPeriods(request, el, node) {
+  const plot = el("history-plot"), chart = el("chart-bars"), panel = el("history-period");
+  const list = el("history-period-results"), status = el("history-period-status"), more = el("history-period-more");
+  const choices = new WeakMap();
+  let selected;
+
+  async function load(view) {
+    if (view.loading) return;
+    view.loading = true;
+    status.textContent = "Loading packages…";
+    more.setAttribute("aria-disabled", "true");
+    try {
+      const page = await request("/api/admin/build/history/packages", "QUERY", {...view.query, after: view.next});
+      if (selected !== view) return;
+      const rows = document.createDocumentFragment();
+      for (const result of page.packages) {
+        const row = node("li"), pkg = node("span", result.package);
+        const outcome = node("span", result.outcome === "failed" ? "Failed" : "Built");
+        pkg.className = "history-package";
+        outcome.className = "history-outcome";
+        outcome.dataset.outcome = result.outcome;
+        row.append(pkg, outcome);
+        rows.append(row);
+      }
+      const firstNew = rows.firstElementChild;
+      list.append(rows);
+      if (document.activeElement === more) {
+        // Continue reading at the first newly revealed package, even when
+        // this was the last page and the pagination button disappears.
+        if (firstNew) {
+          firstNew.tabIndex = -1;
+          firstNew.focus();
+        } else el("history-period-close").focus({preventScroll: true});
+      }
+      view.next = page.next;
+      status.textContent = page.next ? "Showing the first " + display.number(list.childElementCount) + " results." :
+        list.childElementCount ? "" : "No packages finished in this period.";
+      more.textContent = "Show more packages";
+      more.hidden = !page.next;
+    } catch (error) {
+      if (selected !== view) return;
+      status.textContent = "Could not load package results. " + error.message;
+      more.textContent = "Retry";
+      more.hidden = false;
+    } finally {
+      view.loading = false;
+      if (selected === view) more.removeAttribute("aria-disabled");
+    }
+  }
+
+  function open(bar) {
+    selected?.bar.setAttribute("aria-expanded", "false");
+    const choice = choices.get(bar);
+    selected = {...choice, bar};
+    bar.setAttribute("aria-expanded", "true");
+    panel.hidden = false;
+    el("history-period-title").textContent = choice.label;
+    el("history-period-summary").textContent = choice.summary;
+    list.replaceChildren();
+    list.scrollTop = 0;
+    more.hidden = true;
+    if (!choice.total) status.textContent = "No packages finished in this period.";
+    else load(selected);
+  }
+
+  function close(restoreFocus = false) {
+    if (restoreFocus) selected?.bar.focus({preventScroll: true});
+    selected?.bar.setAttribute("aria-expanded", "false");
+    selected = undefined;
+    panel.hidden = true;
+    list.replaceChildren();
+  }
+
+  function tabStop(bar) {
+    chart.querySelector('[tabindex="0"]')?.setAttribute("tabindex", "-1");
+    bar.setAttribute("tabindex", "0");
+  }
+
+  function activate(bar) {
+    tabStop(bar);
+    if (selected?.bar === bar) close();
+    else open(bar);
+  }
+
+  chart.addEventListener("focusin", event => {
+    if (choices.has(event.target)) tabStop(event.target);
+  });
+  chart.onclick = event => {
+    const bar = event.target.closest("g[data-start]");
+    if (bar) activate(bar);
+  };
+  chart.onkeydown = event => {
+    const bar = event.target;
+    if (!choices.has(bar)) return;
+    switch (event.key) {
+      case "ArrowLeft": (bar.previousElementSibling || bar).focus(); break;
+      case "ArrowRight": (bar.nextElementSibling || bar).focus(); break;
+      case "Home": chart.firstElementChild.focus(); break;
+      case "End": chart.lastElementChild.focus(); break;
+      case " ":
+      case "Enter": if (!event.repeat) activate(bar); break;
+      default: return;
+    }
+    event.preventDefault();
+  };
+  plot.onkeydown = event => {
+    if (event.key === "Escape" && selected) { close(true); event.preventDefault(); }
+  };
+  el("history-period-close").onclick = () => close(true);
+  more.onclick = () => { if (selected) load(selected); };
+
+  return {
+    close,
+    register(bar, bucket, interval, asOf, label) {
+      const summary = display.number(bucket.succeeded) + " built · " + display.number(bucket.failed) + " failed";
+      choices.set(bar, {query: {interval, start: bucket.start, as_of: asOf}, label, summary, total: bucket.succeeded + bucket.failed});
+      bar.dataset.start = bucket.start;
+      bar.setAttribute("role", "button");
+      bar.setAttribute("tabindex", "-1");
+      bar.setAttribute("aria-label", label + ", " + summary);
+      bar.setAttribute("aria-controls", panel.id);
+      bar.setAttribute("aria-expanded", "false");
+    },
+    replace(bars) {
+      const columns = Array.from(bars.children);
+      const oldTab = chart.querySelector('[tabindex="0"]');
+      const tab = columns.find(col => col.dataset.start === oldTab?.dataset.start) || columns.at(-1);
+      tab?.setAttribute("tabindex", "0");
+      const focused = chart.contains(document.activeElement);
+      const next = selected && columns.find(col => col.dataset.start === selected.query.start);
+      chart.replaceChildren(bars);
+      if (next) {
+        // Keep the selected snapshot and its pagination stable through live refreshes.
+        selected.bar = next;
+        next.setAttribute("aria-expanded", "true");
+      } else close();
+      if (focused) tab?.focus({preventScroll: true});
     }
   };
 }
 
 function createBuildView(request, el, node) {
   const runResults = createBuildResults(request, el, node);
+  const periods = createHistoryPeriods(request, el, node);
   let currentBuild, liveVersion = 0, historyVersion = 0;
   let interval = "day", lastChart = "", lastHistoryCheck = 0;
   let submitting = false, waitingForWorker = false;
@@ -555,6 +779,10 @@ function createBuildView(request, el, node) {
   const outcomes = ["succeeded", "failed"];
   const fullDate = new Intl.DateTimeFormat(display.locale, {dateStyle: "medium", timeStyle: "short"});
   const utcDate = new Intl.DateTimeFormat(display.locale, {dateStyle: "medium", timeStyle: "medium", timeZone: "UTC"});
+  const builderID = new Intl.NumberFormat(display.locale, {minimumIntegerDigits: 2, useGrouping: false});
+  const slotsPerPage = 128;
+  const pageInput = el("builder-page");
+  let builderPage = 1;
 
   function timeValue(value) {
     if (!value || value.startsWith("0001-01-01")) return null;
@@ -579,15 +807,21 @@ function createBuildView(request, el, node) {
       opening && !active ? "" : message === label ? "" : (message || ""));
 
     const facts = [];
-    function fact(name, value) {
+    function fact(name, value, description) {
       const item = document.createElement("div");
-      item.append(node("dt", name), node("dd", value));
+      const term = node("dt", name);
+      if (description) {
+        item.title = description;
+        term.setAttribute("aria-description", description);
+      }
+      item.append(term, node("dd", value));
       facts.push(item);
     }
     if (started && active) fact("Elapsed", buildDuration(Math.max(0, Date.now() - started) / 1000));
     else if (started && finished && finished >= started) fact("Duration", buildDuration((finished - started) / 1000));
     if (build.trigger && triggers[build.trigger]) fact("Trigger", triggers[build.trigger]);
-    if (Number.isInteger(build.origins)) fact(active ? "Origins in this run" : "Origins in last run", display.number(build.origins));
+    if (Number.isInteger(build.origins)) fact("Requested ports", display.number(build.origins),
+      "FreeBSD ports on this run’s build list, such as www/firefox. Package progress also counts the dependencies Poudriere builds.");
     if (active && started) fact("Started", fullDate.format(started));
     else if (finished) fact("Finished", fullDate.format(finished));
     el("build-facts").replaceChildren(...facts);
@@ -610,13 +844,7 @@ function createBuildView(request, el, node) {
       el("progress-percent").textContent = "";
       el("package-counts").textContent = "";
     }
-    const jobs = build.jobs || [];
-    el("active-jobs").hidden = jobs.length === 0;
-    el("job-heading").textContent = build.paused ? "Paused packages" : "Running packages";
-    const running = el("build-jobs");
-    const focusedJob = running.contains(document.activeElement) ? document.activeElement.dataset.logJob : null;
-    running.replaceChildren(...jobs.map(jobRow));
-    if (focusedJob) Array.from(running.querySelectorAll("[data-log-job]")).find(button => button.dataset.logJob === focusedJob)?.focus({preventScroll: true});
+    drawJobs(build);
 
     const when = timeValue(build.next_run);
     const queued = [];
@@ -667,49 +895,154 @@ function createBuildView(request, el, node) {
     el("worker-mode").hidden = build.can_force !== false;
   }
 
-  function jobRow(job) {
-    const item = document.createElement("li");
-    const pkg = document.createElement("div");
-    pkg.className = "job-package";
-    pkg.append(node("strong", job.package || job.origin));
-    pkg.append(node("small", ["Builder " + job.id, job.origin].filter(Boolean).join(" · ")));
-    if (job.package && timeValue(currentBuild.started)) {
-      const viewLog = node("button", "View log");
-      viewLog.type = "button";
-      viewLog.dataset.logJob = job.package;
-      viewLog.setAttribute("aria-label", "View build log for " + job.package);
-      const started = currentBuild.started;
-      viewLog.onclick = () => runResults.showLog(started, job, job.phase);
-      pkg.append(viewLog);
+  function drawJobs(build) {
+    const running = el("build-jobs");
+    const jobs = new Map((build.jobs || []).map(job => [Number(job.id), job]));
+    let capacity = Number.isSafeInteger(build.builder_capacity) && build.builder_capacity > 0 ? build.builder_capacity : 0;
+    if (capacity) {
+      for (const id of jobs.keys()) capacity = Math.max(capacity, id);
     }
+    el("active-jobs").hidden = !jobs.size && !capacity;
+    el("job-count").textContent = capacity ? display.number(jobs.size) + " of " + display.number(capacity) : display.number(jobs.size);
 
-    const phase = document.createElement("div");
-    phase.className = "job-phase";
-    const label = node("span", "Phase");
-    label.className = "job-phase-label";
-    const measured = Number.isFinite(job.progress_percent);
-    phase.append(label, node("strong", (job.phase || "—") + (measured ? " · " + display.percent(job.progress_percent / 100) : "")));
-    if (measured) {
-      const bar = document.createElement("progress");
-      bar.setAttribute("aria-label", "Build tool progress for " + (job.package || job.origin));
-      bar.max = 100;
-      bar.value = job.progress_percent;
-      phase.append(bar);
+    // A legacy snapshot without capacity can identify only the occupied builders.
+    const total = capacity || jobs.size;
+    const pages = Math.max(1, Math.ceil(total / slotsPerPage));
+    const priorPage = builderPage;
+    builderPage = Math.min(builderPage, pages);
+    pageInput.max = String(pages);
+    if (document.activeElement !== pageInput || priorPage !== builderPage) pageInput.value = String(builderPage);
+    el("builder-pages").hidden = pages === 1;
+    el("builder-previous").disabled = builderPage <= 1;
+    el("builder-next").disabled = builderPage >= pages;
+    const start = (builderPage - 1) * slotsPerPage;
+    const end = Math.min(total, start + slotsPerPage);
+    const range = display.number(start + 1) + "–" + display.number(end) + " of " + display.number(total) + " builders";
+    if (pages > 1 && el("builder-range").textContent !== range) el("builder-range").textContent = range;
+
+    const focused = running.contains(document.activeElement) && document.activeElement.dataset.logJob ? document.activeElement : null;
+    const remaining = new Map(Array.from(running.children, row => [row.dataset.builder, row]));
+    let next = running.firstElementChild;
+    function drawSlot(id) {
+      const job = jobs.get(id);
+      const key = String(id);
+      const item = remaining.get(key) || document.createElement("li");
+      const idle = item.hasAttribute("data-idle");
+      remaining.delete(key);
+      if (item !== next) running.insertBefore(item, next);
+      next = item.nextElementSibling;
+      if (!job && idle) return;
+      item.tabIndex = -1;
+      item.dataset.builder = key;
+      item.toggleAttribute("data-idle", !job);
+      drawJobRow(item, "Builder " + builderID.format(id), job);
     }
-    const metrics = document.createElement("dl");
-    metrics.className = "job-metrics";
-    function metric(label, value, title) {
+    if (capacity) {
+      if (start === 0 && jobs.has(0)) drawSlot(0);
+      for (let id = start + 1; id <= end; id++) drawSlot(id);
+    } else {
+      for (const id of Array.from(jobs.keys()).sort((a, b) => a - b).slice(start, end)) drawSlot(id);
+    }
+    for (const row of remaining.values()) row.remove();
+    if (focused && document.activeElement !== focused) focusRunningLog(focused);
+  }
+
+  function chooseBuilderPage(value) {
+    if (!currentBuild) return;
+    if (Number.isSafeInteger(value)) builderPage = Math.min(Math.max(1, value), Number(pageInput.max));
+    pageInput.value = String(builderPage);
+    drawJobs(currentBuild);
+  }
+  el("builder-previous").onclick = () => chooseBuilderPage(builderPage - 1);
+  el("builder-next").onclick = () => chooseBuilderPage(builderPage + 1);
+  pageInput.onchange = () => chooseBuilderPage(pageInput.valueAsNumber);
+  pageInput.onkeydown = event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      chooseBuilderPage(pageInput.valueAsNumber);
+    }
+  };
+
+  function drawJobRow(item, builder, job) {
+    const fields = document.createElement("dl");
+    fields.className = "job-fields";
+    if (item.firstElementChild) item.firstElementChild.replaceWith(fields);
+    else item.append(fields);
+    function field(label, value, title) {
       const group = document.createElement("div");
       const term = node("dt", label);
-      term.title = title;
-      group.append(term, node("dd", value));
-      metrics.append(group);
+      const detail = document.createElement("dd");
+      if (title) {
+        group.title = title;
+        detail.setAttribute("aria-description", title);
+      }
+      detail.append(value);
+      group.append(term, detail);
+      fields.append(group);
     }
-    metric("Elapsed", buildDuration(job.elapsed_seconds), "Elapsed time since this package started, including pauses");
-    metric("CPU", Number.isFinite(job.cpu_percent) ? display.percent(job.cpu_percent / 100) : "—", display.percent(1) + " represents one CPU core");
-    metric("Memory", Number.isFinite(job.memory_bytes) ? display.unit(job.memory_bytes / 1e6, "megabyte") : "—", "Resident memory used by this builder’s processes");
-    item.append(pkg, phase, metrics);
-    return item;
+    const pkg = document.createElement("div");
+    pkg.className = "job-package";
+    const title = node("strong", job ? job.package || job.origin : "Idle");
+    const origin = node("small", [builder, job?.origin].filter(Boolean).join(" · "));
+    title.title = title.textContent;
+    origin.title = origin.textContent;
+    pkg.append(title, origin);
+    field("Package", pkg);
+    const meter = document.createElement("div");
+    meter.className = "job-progress";
+    const oldLog = item.querySelector(".log-button");
+    if (!job) {
+      oldLog?.remove();
+      meter.append(node("strong", "—"));
+      field("Phase", meter);
+      for (const label of ["Elapsed", "CPU", "Memory"]) field(label, "—");
+      return;
+    }
+    const caption = node("strong", job.phase || "—");
+    meter.append(caption);
+    const measured = Number.isFinite(job.progress_percent);
+    function progressBar(label, value, max) {
+      const bar = document.createElement("progress");
+      bar.setAttribute("aria-label", label + " for " + (job.package || job.origin));
+      bar.max = max;
+      bar.value = value;
+      return bar;
+    }
+    const previous = job.last_build_seconds, elapsed = job.active_elapsed_seconds;
+    const timed = Number.isFinite(previous) && previous > 0 && Number.isFinite(elapsed) && elapsed >= 0;
+    if (measured) {
+      caption.append(" – " + display.percent(job.progress_percent / 100));
+      caption.title = "Progress reported by the build tool";
+      meter.append(progressBar("Build tool progress", job.progress_percent, 100));
+    } else if (timed && elapsed < previous) {
+      caption.append(" – est. " + display.percent(Math.floor(100 * elapsed / previous) / 100));
+      const bar = progressBar("Estimated package progress based on the last build time", elapsed, previous);
+      bar.className = "estimated-progress";
+      meter.append(bar);
+    }
+    field("Phase", meter);
+    let elapsedHint = "Elapsed time since this package started, including pauses";
+    if (timed) {
+      const remaining = previous - elapsed;
+      let prediction = "Previous build time reached";
+      if (remaining > 0) prediction = "Est. " + buildDuration(remaining) + (currentBuild.paused ? " left after resume" : " left");
+      if (remaining < 0) prediction = buildDuration(-remaining) + " past estimate";
+      elapsedHint += ". " + prediction + " · last successful build " + buildDuration(previous);
+    }
+    field("Elapsed", buildDuration(job.elapsed_seconds), elapsedHint);
+    field("CPU", Number.isFinite(job.cpu_percent) ? display.percent(job.cpu_percent / 100) : "—", display.percent(1) + " represents one CPU core");
+    field("Memory", Number.isFinite(job.memory_bytes) ? display.unit(job.memory_bytes / 1e6, "megabyte") : "—", "Resident memory used by this builder’s processes");
+    if (job.package && timeValue(currentBuild.started)) {
+      const sameLog = oldLog?.dataset.logJob === job.package && oldLog.dataset.logRun === currentBuild.started;
+      const log = runResults.logButton(currentBuild.started, job, job.phase, sameLog ? oldLog : undefined);
+      log.dataset.logJob = job.package;
+      log.dataset.logRun = currentBuild.started;
+      log.dataset.builder = item.dataset.builder;
+      if (!sameLog) {
+        oldLog?.remove();
+        item.append(log);
+      }
+    } else oldLog?.remove();
   }
 
   function receiveBuild(build) {
@@ -762,12 +1095,12 @@ function createBuildView(request, el, node) {
       await loadBuild();
     } finally {
       submitting = false;
-      drawBuild(currentBuild);
+      if (currentBuild) drawBuild(currentBuild);
     }
   };
 
   // Chart dates match the server's UTC bucket boundaries regardless of the
-  // operator's timezone. The data table gives exact values for every column.
+  // operator's timezone.
   function bucketLabel(date, short) {
     const options = interval === "month" ? {month: short ? "short" : "long", year: short ? "2-digit" : "numeric"} :
       interval === "hour" ? {hour: "numeric", ...(short ? {} : {year: "numeric", month: "short", day: "numeric"})} :
@@ -777,7 +1110,7 @@ function createBuildView(request, el, node) {
   }
 
   function drawHistory(history) {
-    const key = JSON.stringify(history);
+    const key = JSON.stringify([interval, history.buckets, history.totals, history.recent]);
     if (key === lastChart) return;
     const buckets = history.buckets;
     const total = history.totals.succeeded;
@@ -790,29 +1123,23 @@ function createBuildView(request, el, node) {
     for (const outcome of outcomes) el("total-" + outcome).textContent = display.number(history.totals[outcome]);
     el("chart-max").textContent = display.number(ceiling);
     el("chart-mid").textContent = ceiling % 2 === 0 ? display.number(ceiling / 2) : "";
-    el("history-plot").setAttribute("aria-label", display.number(total) + " built and " + display.number(history.totals.failed) + " failed in the last " + range + ", grouped by " + interval + " in UTC. Exact counts follow in the data table.");
-    const bars = document.createDocumentFragment(), rows = document.createDocumentFragment();
+    el("history-plot").setAttribute("aria-label", display.number(total) + " built and " + display.number(history.totals.failed) + " failed in the last " + range + ", grouped by " + interval + " in UTC.");
+    const bars = document.createDocumentFragment();
     const svg = tag => document.createElementNS("http://www.w3.org/2000/svg", tag);
     el("chart-bars").setAttribute("viewBox", "0 0 " + buckets.length * 10 + " " + ceiling);
     for (const [index, bucket] of buckets.entries()) {
       const label = bucketLabel(new Date(bucket.start), false);
       const col = svg("g");
       col.setAttribute("transform", "translate(" + index * 10 + " 0)");
-      const title = svg("title");
-      title.textContent = label + " UTC · " + outcomes.map(k => display.number(bucket[k]) + " " + k).join(" · ");
+      periods.register(col, bucket, interval, history.as_of, label + " UTC");
       const target = svg("rect");
       target.setAttribute("width", "10");
       target.setAttribute("height", ceiling);
       target.classList.add("chart-target");
-      col.append(title, target);
-      const row = document.createElement("tr");
-      const th = node("th", label);
-      th.scope = "row";
-      row.append(th);
+      col.append(target);
       let top = ceiling;
       for (const outcome of outcomes) {
         const count = bucket[outcome];
-        row.append(node("td", display.number(count)));
         if (!count) continue;
         top -= count;
         const segment = svg("rect");
@@ -824,10 +1151,8 @@ function createBuildView(request, el, node) {
         col.append(segment);
       }
       bars.append(col);
-      rows.append(row);
     }
-    el("chart-bars").replaceChildren(bars);
-    el("history-values").replaceChildren(rows);
+    periods.replace(bars);
     const recent = history.recent || [];
     const attempts = total + history.totals.failed;
     const shown = display.number(recent.length);
@@ -842,21 +1167,17 @@ function createBuildView(request, el, node) {
       time.dateTime = result.finished;
       const finished = document.createElement("td");
       finished.append(time);
-      const outcome = node("td", "Built");
+      const action = document.createElement("td");
       if (result.outcome === "failed") {
         const inspect = node("button", "Inspect failure");
         inspect.type = "button";
         inspect.setAttribute("aria-label", "Inspect failure for " + result.package);
         inspect.onclick = () => runResults.reveal(result.started, result.package);
-        outcome.replaceChildren(inspect);
+        action.append(inspect);
       } else {
-        const log = node("button", "View log");
-        log.type = "button";
-        log.setAttribute("aria-label", "View build log for " + result.package);
-        log.onclick = () => runResults.showLog(result.started, result, "Built");
-        outcome.append(" ", log);
+        action.append(runResults.logButton(result.started, result, "Built"));
       }
-      row.append(name, outcome, finished);
+      row.append(name, node("td", result.outcome === "failed" ? "Failed" : "Built"), finished, action);
       results.append(row);
     }
     el("history-recent-values").replaceChildren(results);
@@ -891,6 +1212,7 @@ function createBuildView(request, el, node) {
   for (const button of el("history-interval").querySelectorAll("button")) {
     button.onclick = () => {
       if (interval === button.dataset.interval) return;
+      periods.close();
       interval = button.dataset.interval;
       for (const choice of el("history-interval").querySelectorAll("button")) {
         choice.setAttribute("aria-pressed", String(choice === button));
@@ -902,7 +1224,16 @@ function createBuildView(request, el, node) {
   el("history-retry").onclick = loadHistory;
 
   return {
-    loadBuild, loadHistory, receiveBuild, buildError, closeResults: runResults.close,
+    loadBuild, loadHistory, receiveBuild, buildError,
+    closeResults() {
+      periods.close();
+      runResults.close();
+      ++liveVersion;
+      currentBuild = undefined;
+      builderPage = 1;
+      el("build-jobs").replaceChildren();
+      el("active-jobs").hidden = true;
+    },
     refreshPeriodic() {
       // Idle streams send only heartbeats. Keep the schedule and elapsed labels current.
       if (currentBuild) drawBuild(currentBuild);
@@ -1138,7 +1469,7 @@ function createInventoryView(request, el, node) {
       el("inventory-cache-limit").textContent = Number.isFinite(data.cache_limit) ? "of " + diskSize(data.cache_limit) : "";
       el("inventory-poudriere-size").textContent = diskSize(data.poudriere_bytes);
       if (data.poudriere_bytes == null) notes.push("Poudriere disk usage is unavailable.");
-      if (!data.origins_ready) notes.push("The worker’s list of tracked origins is unavailable.");
+      if (!data.origins_ready) notes.push("The worker’s list of tracked ports is unavailable.");
       if (!data.catalog_ready) notes.push("Catalog versions will appear after a successful catalog refresh.");
       sortPackages();
     } else if (view.records) notes.push("Could not refresh package inventory. Showing the last result.");
@@ -1291,6 +1622,7 @@ function initManagement() {
 
   function setDashboardVisible(visible) {
     el("dashboard").hidden = !visible;
+    el("dashboard-links").hidden = !visible;
     bell.hidden = !visible;
     if (!visible && notificationDialog.open) notificationDialog.close();
     if (!visible) {

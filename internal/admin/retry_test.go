@@ -73,13 +73,43 @@ func TestSupervisorValidatesRetryAndWorkerBuildsTemporaryList(t *testing.T) {
 	for _, bad := range []map[string]any{
 		{"started": started, "package": nil}, {"started": started, "package": ""},
 		{"started": started, "origin": "misc/codex"}, {"package": "codex-1"},
+		{"started": started, "outcome": nil}, {"started": started, "outcome": ""},
+		{"started": started, "outcome": "succeeded"}, {"started": started, "outcome": []string{"failed"}},
+		{"started": started, "package": "abseil-1", "outcome": "failed"},
 	} {
 		check(request(bad), 400)
 	}
+	changedOutcome := request(map[string]any{"started": started, "outcome": "failed"})
+	changedOutcome.Body = request(map[string]any{"started": started, "outcome": "skipped"}).Body
+	check(changedOutcome, 401)
 	check(request(map[string]any{"started": started, "package": "unknown-1"}), 404)
 	check(request(map[string]any{"started": started.Add(-time.Minute)}), 404)
+	clean := started.Add(time.Minute)
+	testutil.WriteFile(t, filepath.Join(filepath.Dir(dir), clean.Format(builder.BuildNameFormat), ".poudriere.ports.built"), []byte("ftp/curl curl-1 5\n"))
+	for _, outcome := range []string{"failed", "skipped"} {
+		check(request(map[string]any{"started": clean, "outcome": outcome}), 409)
+	}
 	if worker.Status().RetryPending != 0 {
 		t.Fatal("rejected retry changed the queue")
+	}
+	emptyQueue := worker.Checkpoint()
+	for _, group := range []struct {
+		outcome string
+		want    []string
+	}{
+		{"failed", []string{"devel/abseil", "misc/foo"}},
+		{"skipped", []string{"devel/protobuf", "misc/codex"}},
+	} {
+		args := map[string]any{"started": started, "outcome": group.outcome}
+		signed := request(args)
+		if check(signed, 202).AlreadyQueued || !slices.Equal(worker.Checkpoint().RetryOrigins, group.want) {
+			t.Fatalf("retry %s queued %v, want %v", group.outcome, worker.Checkpoint().RetryOrigins, group.want)
+		}
+		check(signed, 409)
+		if !check(request(args), 202).AlreadyQueued {
+			t.Fatalf("repeated %s selection added duplicate work", group.outcome)
+		}
+		worker.RestoreCheckpoint(emptyQueue)
 	}
 	if check(req, 202).AlreadyQueued {
 		t.Fatal("first request marked already queued")

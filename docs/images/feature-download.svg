@@ -1,1 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><rect width="48" height="48" rx="12" fill="#fceeee"/><g transform="translate(12 12)" fill="none" stroke="#c62828" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+  <title id="title">Faster downloads</title>
+  <rect x="6" y="6" width="39" height="39" fill="#080907" stroke="#8b8c7e" stroke-width="2"/>
+  <rect x="2" y="2" width="40" height="40" fill="#ffd267" stroke="#080907" stroke-width="3"/>
+  <path fill="#080907" d="M19 10h6v10h6l-9 10-9-10h6z"/>
+  <path fill="none" stroke="#080907" stroke-width="3" d="M11 26v7h22v-7"/>
+</svg>

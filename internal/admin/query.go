@@ -36,7 +36,7 @@ func writeDBQueryError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, database.ErrNotFound):
 		http.Error(w, "404 page not found", http.StatusNotFound)
-	case errors.Is(err, database.ErrBuildInterval):
+	case errors.Is(err, database.ErrBuildInterval), errors.Is(err, database.ErrBuildPeriod):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
 		adminInternal(w, err)

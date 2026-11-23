@@ -47,17 +47,23 @@ Each overlay covers one port origin, including its flavors and subpackages. Chan
 
 Poudrine checks the FreeBSD metadata every five minutes by default. When the mirror supports conditional HTTP requests, an unchanged signed catalog can be revalidated without downloading the archive again. Changed metadata still requires signature verification before publication. If a check fails, Poudrine retries within a minute.
 
-**Build activity** shows overall progress and the next scheduled run or retry. Below it, **Running packages** updates live as builders start and finish. Each row shows the package, its current phase and elapsed time, including working-hours pauses. A percentage appears when the build tool reports progress within its current phase. CPU and resident memory are summed across the builder’s jail processes. CPU usage of 100% represents one core.
+**Build activity** shows overall progress and the next scheduled run or retry. **Requested ports** counts the entries on the build list. Each entry identifies a port by its path in the FreeBSD ports tree, such as `www/firefox`. FreeBSD calls that path the port’s *origin*. Poudriere adds any dependencies it needs to build to the package progress total.
+
+**Compiling packages** shows a slot for each parallel builder. An available builder shows **Idle**. An occupied slot shows the package, phase, elapsed time, CPU and resident memory used by the builder jail. Elapsed time includes pauses. CPU usage of 100% represents one core. Installations with more than 128 builders can page through their slots.
+
+**Phase** shows the build tool’s percentage when available. Otherwise, a percentage labeled **est.** compares active build time with the last successful build of the same package, flavor and ABI. Hover over **Elapsed** to see the estimated time left or how far the build has run past that estimate. Working-hours and service-restart pauses freeze the estimate. A pause in the previous build can make the estimate too high.
 
 **Run build now** updates the jail and ports tree and starts an incremental bulk build. **Queue next build** reserves one follow-up while a build is active. With no tracked origins, the worker still updates the jail and ports tree. Between scheduled runs it checks for changes to the tracked origins every 30 seconds.
 
-Open **Build activity → Build run history** to see package outcomes for the latest run. When a new run starts, its results appear as packages finish. Use **Result** to show only **Built**, **Failed** or **Skipped** packages. Choose an earlier run by date to inspect it. If a failed package succeeds on retry, its success appears in the new run and its original failure stays in the earlier run.
+Open **Build history → Build run history** for the latest run’s package results. The selector lists each retained run’s start time and compiled package count. Use **←** for an older run and **→** for a newer one. Choose **All runs** to include empty runs or **With results** to see runs with built, failed or skipped packages.
 
-Use **View log** for a successful or failed build. For example, if `devel/abseil` fails during `fetch`, its log shows Poudriere’s fetch output and the skipped package entries identify what blocked them. **Load earlier output** reads back to the beginning. For a running package, use **Refresh latest output** to follow its progress.
+Choose **All** to see the entire run, or select the **Succeeded**, **Failed**, or **Skipped** count to see those packages. The counts always cover the whole run. The circular arrow beside **Failed** or **Skipped** queues the packages with that outcome. Poudriere builds any prerequisites they need.
 
-Choose **Retry with dependents** to queue that group, or **Retry all affected packages** for the selected run. The worker starts a fresh incremental Poudriere run in the configured working hours, after any active build finishes. It reuses healthy archives and builds missing packages locally. Diagnosis uses the retained files under `<basefs>/data/logs/bulk/<jail>-<ports>/<run>/`; the web service account needs read access there. Retrying requires the supervised service.
+Select the document icon at the end of a package row to open its build log. For example, if `devel/abseil` fails during `fetch`, its log shows Poudriere’s fetch output and the skipped package entries identify what blocked them. **Load earlier output** reads back to the beginning. For a running package, use **Refresh latest output** to follow its progress.
 
-**Build history** counts packages by the UTC hour, day, week or month they finished. A run that builds 20 packages contributes 20 completions, and the chart shows failed package attempts separately. Expand **Recent package builds** to see the last 20 results in the selected period, including package versions and finish times. Poudrine recovers earlier results from retained Poudriere build logs. Fetched, skipped and already up-to-date packages contribute zero.
+The circular arrow in a package row retries that package with its affected dependency group. A failed package’s phase and reason appear beside its name. Expand **Skipped dependents** to see which packages it blocked. The worker starts a fresh incremental Poudriere run in the configured working hours, after any active build finishes. The new run records the retry result and the earlier run keeps its original result. Poudriere reuses healthy archives and builds missing packages locally. Diagnosis uses the retained files under `<basefs>/data/logs/bulk/<jail>-<ports>/<run>/`. The web service account needs read access there. Retrying requires the supervised service.
+
+**Build history** counts packages by the UTC hour, day, week or month they finished. A run that builds 20 packages contributes 20 completions, and the chart shows failed package attempts separately. Click or tap a bar to see the packages and outcomes for that period. With a keyboard, move between bars using the arrow keys and select with Enter or Space. The list stays open as you move around the dashboard. Use **Show more packages** to page through busy periods. Expand **Recent package builds** to see the last 20 results across the chart, including finish times and links to logs. Poudrine recovers earlier results from retained Poudriere build logs. Fetched, skipped and already up-to-date packages contribute zero.
 
 Enable the bell in Management to receive one notification for each newly built package whose version is higher than its counterpart in the verified FreeBSD catalog. Each notification shows the package and both versions. For example, a local `nginx` build at `1.28.0_2` qualifies when FreeBSD has `1.28.0_1`. Poudrine retries temporary delivery failures for up to seven days after the build finishes.
 
@@ -138,7 +144,8 @@ poudrine-v2\n<METHOD>\n<PATH>\n<UNIX_SECONDS>\n<NONCE>\n
 | `QUERY /api/admin/build` | `{}` |
 | `QUERY /api/admin/build/events` | `{}` |
 | `QUERY /api/admin/build/history` | `{"interval":"day"}` |
-| `QUERY /api/admin/build/results` | `{}` for the latest retained run, or `{"started":"2026-11-21T02:00:00.123456789Z"}` for a specific run |
+| `QUERY /api/admin/build/history/packages` | `{"interval":"day","start":"2026-11-21T00:00:00Z","as_of":"2026-11-21T17:45:00Z"}` |
+| `QUERY /api/admin/build/results` | `{}` for the latest retained run, `{"hide_empty":true}` for the latest run with results, or `{"started":"2026-11-21T02:00:00.123456789Z"}` for a specific run |
 | `QUERY /api/admin/build/issues` | `{}` for the latest run with issues, or `{"started":"2026-11-21T02:00:00.123456789Z"}` |
 | `QUERY /api/admin/build/log` | `{"started":"2026-11-21T02:00:00.123456789Z","package":"abseil-20250127.1_3"}` |
 | `POST /api/admin/build/retry` | `{"started":"2026-11-21T02:00:00.123456789Z","package":"abseil-20250127.1_3"}` |
@@ -147,7 +154,13 @@ poudrine-v2\n<METHOD>\n<PATH>\n<UNIX_SECONDS>\n<NONCE>\n
 
 Login returns HTTP 204. Each `build` event contains the full snapshot, starting with the current state when you connect. Sign each reconnection with a fresh nonce. History accepts `hour`, `day`, `week` and `month`. Forcing a build returns HTTP 202 on acceptance and includes `already_queued` in the response. The client report command on the website signs the exact text it posts to the repository’s `/api/inventory` with that client’s own key.
 
-Use the exact `started` value returned by results or history to select a run. The log query returns the newest output first. Pass its `start` byte offset as `before` to read the preceding chunk. Omit `package` from a retry to queue all the failed and skipped origins for that run.
+In a build snapshot, each running job can include `progress_percent` from its build tool, `active_elapsed_seconds` from the worker, and `last_build_seconds` from build history. Subtract active elapsed seconds from the previous duration to estimate the remaining build time. A negative value gives the time past the estimate.
+
+Use the exact `started` value returned by results or history to select a run. The results response lists retained `runs` newest first and maps their start times to successful package counts in `compiled`. An unreadable run can lack a count. The log query returns the newest output first. Pass its `start` byte offset as `before` to read the preceding chunk.
+
+A retry with `started` and `package` queues that package and its affected dependency group. Send `started` with `"outcome":"failed"` or `"outcome":"skipped"` to queue the ports recorded under that outcome. Sending only `started` queues both groups.
+
+To list packages for a chart bar, send the history response’s `interval` and `as_of` together with that bucket’s `start`. Each page contains up to 50 attempts with the package version, outcome and timestamps. When the response includes `next`, send it as `after` in the next signed query with the same period.
 
 ### Optional public status page
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -64,6 +65,21 @@ func (s DB) RecordBuilds(ctx context.Context, batch []BuildRecord) error {
 		return err
 	}
 	defer timing.Close()
+	// compiled_package_times exposes the latest run for inventory, even if its
+	// duration is unknown. Keep one displaced positive timing per target for
+	// estimates. Either the incoming log or the existing row may be older.
+	prior, err := tx.PrepareContext(ctx, `WITH displaced AS (
+ SELECT min(started_ns,?5) AS started, CASE WHEN started_ns < ?5 THEN seconds ELSE ?6 END AS measured
+ FROM compiled_package_times WHERE package=?4 AND origin=?2 AND abi=?3 AND (started_ns!=?5 OR seconds=0)
+)
+INSERT INTO previous_package_build_times(name,origin,abi,started_ns,seconds)
+ SELECT ?1,?2,?3,started,measured FROM displaced WHERE measured > 0
+ ON CONFLICT(name,origin,abi) DO UPDATE SET started_ns=excluded.started_ns,seconds=excluded.seconds
+ WHERE excluded.started_ns > started_ns`)
+	if err != nil {
+		return err
+	}
+	defer prior.Close()
 	// A published version can outlive both its build history and its logs.
 	// Keep the latest successful run for each version, origin and ABI. The
 	// bulk start identifies the run even when log files are replayed in a
@@ -102,6 +118,11 @@ func (s DB) RecordBuilds(ctx context.Context, batch []BuildRecord) error {
 			continue
 		}
 		abi := packageinfo.PackageABI(r.ABI, "")
+		if name, _ := packageinfo.SplitBuildPackage(r.Package); name != "" && r.Origin != "" && abi != "" {
+			if _, err := prior.ExecContext(ctx, name, r.Origin, abi, r.Package, startNS, r.BuildSeconds); err != nil {
+				return err
+			}
+		}
 		if _, err := compiled.ExecContext(ctx, r.Package, r.Origin, abi, startNS, r.BuildSeconds); err != nil {
 			return err
 		}
@@ -140,12 +161,14 @@ type BuildBucket struct {
 type BuildHistory struct {
 	Unit     string        `json:"unit"`
 	Interval string        `json:"interval"`
+	AsOf     time.Time     `json:"as_of"`
 	Buckets  []BuildBucket `json:"buckets"`
 	Totals   BuildCounts   `json:"totals"`
 	Recent   []BuildRecord `json:"recent"`
 }
 
 var ErrBuildInterval = errors.New("interval must be hour, day, week, or month")
+var ErrBuildPeriod = errors.New("expected a chart period start, as_of timestamp and optional cursor within that period")
 
 // Include the current partial period. UTC keeps days consistent across DST,
 // and calculating from the first of each month avoids end-of-month rollover.
@@ -208,7 +231,7 @@ func (s DB) BuildHistory(ctx context.Context, interval string, now time.Time) (B
 		return BuildHistory{}, err
 	}
 	defer rows.Close()
-	out := BuildHistory{Unit: "packages", Interval: interval, Buckets: make([]BuildBucket, 0, len(slots)), Recent: []BuildRecord{}}
+	out := BuildHistory{Unit: "packages", Interval: interval, AsOf: now.UTC(), Buckets: make([]BuildBucket, 0, len(slots)), Recent: []BuildRecord{}}
 	for rows.Next() {
 		var bucket BuildBucket
 		var startNS int64
@@ -245,6 +268,71 @@ func (s DB) BuildHistory(ctx context.Context, interval string, now time.Time) (B
 		return BuildHistory{}, err
 	}
 	return out, tx.Commit()
+}
+
+type BuildPeriodQuery struct {
+	Interval string       `json:"interval"`
+	Start    time.Time    `json:"start"`
+	AsOf     time.Time    `json:"as_of"`
+	After    *BuildRecord `json:"after,omitempty"`
+}
+
+type BuildPeriodPage struct {
+	Packages []BuildRecord `json:"packages"`
+	Next     *BuildRecord  `json:"next,omitempty"`
+}
+
+const historyPageSize = 50
+
+func (s DB) BuildHistoryPackages(ctx context.Context, q BuildPeriodQuery) (BuildPeriodPage, error) {
+	bounds, err := buildBucketBounds(q.Interval, q.AsOf)
+	if err != nil {
+		return BuildPeriodPage{}, err
+	}
+	i := slices.IndexFunc(bounds[:len(bounds)-1], q.Start.Equal)
+	if i < 0 || !time.Unix(0, q.Start.UnixNano()).Equal(q.Start) ||
+		!time.Unix(0, q.AsOf.UnixNano()).Equal(q.AsOf) || q.AsOf.After(time.Now()) {
+		return BuildPeriodPage{}, ErrBuildPeriod
+	}
+	end := bounds[i+1]
+	// The empty outcome sorts before both real outcomes, including attempts
+	// finishing exactly at the start of the period.
+	cursor := BuildRecord{Started: q.Start, Finished: q.Start}
+	if q.After != nil {
+		cursor = *q.After
+		if cursor.Finished.Before(q.Start) || !cursor.Finished.Before(end) || cursor.Finished.After(q.AsOf) ||
+			cursor.Started.After(cursor.Finished) || !time.Unix(0, cursor.Started.UnixNano()).Equal(cursor.Started) ||
+			(cursor.Outcome != "failed" && cursor.Outcome != "succeeded") ||
+			len(cursor.Package) > 255 || !packageinfo.JobPackage.MatchString(cursor.Package) {
+			return BuildPeriodPage{}, ErrBuildPeriod
+		}
+	}
+	// The finished index on this WITHOUT ROWID table also contains the
+	// primary key. All four columns distinguish attempts sharing a timestamp.
+	rows, err := s.QueryContext(ctx, `SELECT finished_ns,outcome,started_ns,package FROM package_builds
+ WHERE (finished_ns,outcome,started_ns,package) > (?,?,?,?) AND finished_ns < ? AND finished_ns <= ?
+ ORDER BY finished_ns,outcome,started_ns,package LIMIT ?`,
+		cursor.Finished.UnixNano(), cursor.Outcome, cursor.Started.UnixNano(), cursor.Package,
+		end.UnixNano(), q.AsOf.UnixNano(), historyPageSize+1)
+	if err != nil {
+		return BuildPeriodPage{}, err
+	}
+	defer rows.Close()
+	page := BuildPeriodPage{Packages: []BuildRecord{}}
+	for rows.Next() {
+		if len(page.Packages) == historyPageSize {
+			page.Next = &page.Packages[historyPageSize-1]
+			break
+		}
+		var r BuildRecord
+		var finished, started int64
+		if err := rows.Scan(&finished, &r.Outcome, &started, &r.Package); err != nil {
+			return BuildPeriodPage{}, err
+		}
+		r.Started, r.Finished = time.Unix(0, started).UTC(), time.Unix(0, finished).UTC()
+		page.Packages = append(page.Packages, r)
+	}
+	return page, rows.Err()
 }
 
 type inventoryBuildTarget struct{ origin, abi string }

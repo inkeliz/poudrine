@@ -17,15 +17,17 @@ import (
 	"time"
 )
 
-// A cursor belongs to one package in one Poudriere phase. Only the current
-// compiler target reports a percentage; the other phases have no known total.
+// A cursor follows one package across phases. Its ABI is in the log header;
+// the current compiler target can report a percentage in the build phase.
 type jobLogs map[string]jobLogCursor
 
 type jobLogCursor struct {
-	file    os.FileInfo
-	offset  int64
-	inBuild bool
-	percent *int
+	file       os.FileInfo
+	abi        string
+	headerRead bool
+	offset     int64
+	inBuild    bool
+	percent    *int
 }
 
 const progressTail = 32 << 10
@@ -36,26 +38,40 @@ var compilerStep = regexp.MustCompile(`^\[ *([0-9]{1,9})(%|/([0-9]{1,9}))\](?:[ 
 
 var LogTimePrefix = regexp.MustCompile(`^\[[0-9]+:[0-9]{2}:[0-9]{2}\][ \t]*`)
 
-func (c *jobLogCursor) progress(dir *os.Root, pkg string) *int {
+func (c *jobLogCursor) sample(dir *os.Root, pkg string, compiling bool) (string, *int) {
+	if !compiling {
+		c.inBuild, c.percent = false, nil
+		if c.headerRead {
+			return c.abi, nil
+		}
+	}
 	f, err := dir.OpenFile(filepath.Join("logs", pkg+".log"), os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 	if err != nil {
-		return nil
+		return c.abi, nil
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		return nil
+		return c.abi, nil
 	}
 	if c.file == nil || !os.SameFile(c.file, info) || info.Size() < c.file.Size() ||
 		info.Size() == c.file.Size() && info.ModTime() != c.file.ModTime() {
 		*c = jobLogCursor{}
+	}
+	if !c.headerRead && (c.file == nil || info.Size() != c.file.Size()) {
+		c.abi = PackageLogABI(f)
+		c.headerRead = c.abi != "" || info.Size() >= packageLogHeaderSize
+	}
+	c.file = info
+	if !compiling {
+		return c.abi, nil
 	}
 	// Compilers can emit megabytes between polls. Read complete recent lines
 	// only and keep the last measurement while a long command is silent.
 	offset := max(c.offset, info.Size()-progressTail)
 	data, err := io.ReadAll(io.NewSectionReader(f, offset, info.Size()-offset))
 	if err != nil {
-		return nil
+		return c.abi, nil
 	}
 	text := string(data)
 	missedHeader := !c.inBuild && offset > c.offset
@@ -89,8 +105,8 @@ func (c *jobLogCursor) progress(dir *os.Root, pkg string) *int {
 	if missedHeader {
 		c.inBuild = true
 	}
-	c.offset, c.file = offset, info
-	return c.percent
+	c.offset = offset
+	return c.abi, c.percent
 }
 
 func compilePercent(line string) (int, bool) {

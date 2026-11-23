@@ -137,6 +137,11 @@ done
 	if err != nil {
 		t.Fatalf("completed build: %v, %s", err, stderr.String())
 	}
+	pauses := b.jobClock.pauses
+	if b.jobClock.unavailable || len(pauses) != 2 || pauses[0].end <= pauses[0].start ||
+		pauses[1].start < pauses[0].end || pauses[1].end < pauses[1].start {
+		t.Fatalf("confirmed compiler pauses missing from job clock: %+v", b.jobClock)
+	}
 	for _, name := range []string{"compiler", "bulks"} {
 		buf, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil || len(strings.Fields(string(buf))) != 1 {

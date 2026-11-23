@@ -1,4 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="104" height="120" viewBox="0 0 100 100" role="img" aria-labelledby="title" preserveAspectRatio="none">
+<svg xmlns="http://www.w3.org/2000/svg" width="84" height="84" viewBox="0 0 96 96" role="img" aria-labelledby="title">
   <title id="title">Poudrine — stacked packages</title>
-  <polygon fill="#c62828" points="0,24 50,0 100,24 50,49 50,61 100,36 100,52 50,77 50,89 100,64 100,76 50,100 0,76"/>
+  <rect x="12" y="12" width="78" height="78" fill="#080907" stroke="#8b8c7e" stroke-width="4"/>
+  <rect x="4" y="4" width="80" height="80" fill="#ff714e" stroke="#080907" stroke-width="6"/>
+  <polygon transform="translate(21 17) scale(.46 .54)" fill="#080907"
+           points="0,24 50,0 100,24 50,49 50,61 100,36 100,52 50,77 50,89 100,64 100,76 50,100 0,76"/>
 </svg>

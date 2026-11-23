@@ -1,1 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><rect width="48" height="48" rx="12" fill="#fceeee"/><g transform="translate(12 12)" fill="none" stroke="#c62828" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+  <title id="title">Security fixes</title>
+  <rect x="6" y="6" width="39" height="39" fill="#080907" stroke="#8b8c7e" stroke-width="2"/>
+  <rect x="2" y="2" width="40" height="40" fill="#99dfb1" stroke="#080907" stroke-width="3"/>
+  <path fill="#080907" d="m22 9 12 4v9c0 5-5 10-12 14-7-4-12-9-12-14v-9z"/>
+  <path fill="none" stroke="#99dfb1" stroke-width="3.2" d="m15.5 21 4.5 4.5 8-9"/>
+</svg>

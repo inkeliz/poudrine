@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -113,5 +114,87 @@ func TestRecentPackageBuilds(t *testing.T) {
 	daily, err := s.BuildHistory(t.Context(), "day", later)
 	if err != nil || len(daily.Recent) != 20 || daily.Recent[0] != future {
 		t.Fatalf("daily range: %+v, %v", daily.Recent, err)
+	}
+}
+
+func TestBuildHistoryPeriodPages(t *testing.T) {
+	db, err := Open(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// Leap day and the current partial period exercise each chart interval.
+	asOf := testutil.Time(t, "2024-02-29T21:37:08.123456789Z")
+	var batch []BuildRecord
+	for i := range historyPageSize + 3 {
+		batch = append(batch, BuildRecord{
+			Package: fmt.Sprintf("pkg-%03d", i), Outcome: "succeeded",
+			Started: asOf.Add(-time.Hour), Finished: asOf,
+		})
+	}
+	retry := batch[0]
+	retry.Outcome = "failed"
+	batch = append(batch, retry)
+	future := batch[0]
+	future.Package = "future-1"
+	future.Finished = asOf.Add(time.Nanosecond)
+	batch = append(batch, future)
+	for _, finish := range []string{"2024-01-31T23:59:59Z", "2024-02-01T00:00:00Z", "2024-02-26T00:00:00Z", "2024-02-29T00:00:00Z", "2024-02-29T21:00:00Z"} {
+		at := testutil.Time(t, finish)
+		batch = append(batch, BuildRecord{Package: "curl-1", Outcome: "succeeded", Started: at.Add(-time.Minute), Finished: at})
+	}
+	if err := db.RecordBuilds(t.Context(), batch); err != nil {
+		t.Fatal(err)
+	}
+	for _, interval := range []string{"hour", "day", "week", "month"} {
+		h, err := db.BuildHistory(t.Context(), interval, asOf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, bucket := range h.Buckets {
+			args := BuildPeriodQuery{Interval: interval, Start: bucket.Start, AsOf: h.AsOf}
+			var counts BuildCounts
+			seen := map[BuildRecord]bool{}
+			for {
+				page, err := db.BuildHistoryPackages(t.Context(), args)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if page.Packages == nil || len(page.Packages) > historyPageSize {
+					t.Fatalf("%s bucket %s: invalid page length %d", interval, bucket.Start, len(page.Packages))
+				}
+				for _, r := range page.Packages {
+					if seen[r] || r.Finished.Before(bucket.Start) || r.Finished.After(asOf) {
+						t.Fatalf("%s bucket %s: repeated or out-of-period result %+v", interval, bucket.Start, r)
+					}
+					seen[r] = true
+					if r.Outcome == "failed" {
+						counts.Failed++
+					} else {
+						counts.Succeeded++
+					}
+				}
+				if page.Next == nil {
+					break
+				}
+				if len(page.Packages) != historyPageSize || *page.Next != page.Packages[historyPageSize-1] {
+					t.Fatal("unexpected cursor", page.Next)
+				}
+				args.After = page.Next
+			}
+			if counts != bucket.BuildCounts {
+				t.Fatalf("%s bucket %s has %+v, chart has %+v", interval, bucket.Start, counts, bucket.BuildCounts)
+			}
+		}
+	}
+	for _, q := range []BuildPeriodQuery{
+		{Interval: "day", AsOf: asOf, Start: asOf},
+		{Interval: "day", AsOf: asOf, Start: asOf.AddDate(0, 0, -31).Truncate(24 * time.Hour)},
+		{Interval: "day", AsOf: asOf, Start: asOf.Truncate(24 * time.Hour), After: &future},
+		{Interval: "day"},
+	} {
+		if _, err := db.BuildHistoryPackages(t.Context(), q); !errors.Is(err, ErrBuildPeriod) {
+			t.Fatalf("invalid bucket or cursor accepted: %+v: %v", q, err)
+		}
 	}
 }

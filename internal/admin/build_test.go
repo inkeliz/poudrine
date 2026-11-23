@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -92,5 +93,21 @@ func TestStandaloneBuildViewAndHistory(t *testing.T) {
 	var result database.BuildHistory
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || result.Interval != "week" || len(result.Buckets) != 12 || result.Totals.Failed != 1 {
 		t.Fatalf("weekly build history: %s", w.Body)
+	}
+	selected := slices.IndexFunc(result.Buckets, func(b database.BuildBucket) bool { return b.Failed > 0 })
+	if selected < 0 {
+		t.Fatal("weekly history is missing its failure bucket")
+	}
+	query := database.BuildPeriodQuery{Interval: result.Interval, Start: result.Buckets[selected].Start, AsOf: result.AsOf}
+	body, err := json.Marshal(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := routes.HistoryPackages
+	adminResponse(t, a, testutil.SignedRequest(t, key, route.Method, route.Path, []byte(`{"interval":"week"}`), now), 400)
+	w = adminResponse(t, a, testutil.SignedRequest(t, key, route.Method, route.Path, body, now), 200)
+	var page database.BuildPeriodPage
+	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil || len(page.Packages) != 1 || page.Packages[0].Package != "nginx-1" || page.Packages[0].Outcome != "failed" {
+		t.Fatalf("period package results: %s", w.Body)
 	}
 }

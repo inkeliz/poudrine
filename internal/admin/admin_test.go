@@ -25,7 +25,7 @@ import (
 
 func TestAdminEnrollmentAndSignedRequests(t *testing.T) {
 	a := testAdmin(t)
-	for _, path := range []string{"/", "/admin", "/repository.pub", "/poudrine.js"} {
+	for _, path := range []string{"/", "/admin", "/repository.pub", "/poudrine.js", "/fonts/sora-latin.woff2", "/fonts/sora-latin-ext.woff2", "/fonts/atkinson-hyperlegible-next.woff2", "/fonts/geist-mono.woff2"} {
 		w := adminResponse(t, a, httptest.NewRequest("GET", path, nil), 200)
 		if strings.Contains(w.Body.String(), "private-client.example") {
 			t.Fatal("public data leak")
@@ -68,7 +68,7 @@ func TestManagementQueryProtocol(t *testing.T) {
 	otherKey := testutil.AdminKey(t)
 	for _, path := range []string{
 		routes.Status.Path, routes.Setup.Path, routes.ReadConfig.Path, routes.BuildStatus.Path, routes.BuildEvents.Path,
-		routes.Origins.Path, routes.Packages.Path, routes.ClientSummary.Path, routes.ClientPackages.Path, routes.BuildHistory.Path,
+		routes.Origins.Path, routes.Packages.Path, routes.ClientSummary.Path, routes.ClientPackages.Path, routes.BuildHistory.Path, routes.HistoryPackages.Path,
 		routes.Clients.Path, routes.Tracked.Path, routes.PushKey.Path, routes.BuildIssues.Path, routes.BuildResults.Path, routes.BuildLog.Path,
 	} {
 		for _, method := range []string{http.MethodGet, http.MethodHead} {

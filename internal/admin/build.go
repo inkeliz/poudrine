@@ -10,6 +10,8 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"slices"
+	"strconv"
 	"time"
 
 	"github.com/inkeliz/poudrine/internal/broker"
@@ -91,7 +93,46 @@ func (a *Admin) buildSnapshot(r *http.Request, body []byte) (buildView, int, err
 	if reply.Build == nil {
 		return buildView{}, http.StatusServiceUnavailable, errors.New("worker returned no build status")
 	}
-	return buildView{BuildStatus: *reply.Build, CanForce: a.cfg.Broker != nil}, http.StatusOK, nil
+	view := buildView{BuildStatus: *reply.Build, CanForce: a.cfg.Broker != nil}
+	if view.BuilderCapacity == 0 {
+		// Status files from earlier workers only list the busy builders.
+		view.BuilderCapacity = max(int64(a.cfg.Builder.Jobs), int64(len(view.Jobs)))
+		for _, job := range view.Jobs {
+			if slot, err := strconv.ParseUint(job.ID, 10, 32); err == nil {
+				view.BuilderCapacity = max(view.BuilderCapacity, int64(slot))
+			}
+		}
+	}
+	view.Jobs = a.jobsWithBuildTimes(r.Context(), view.Started, view.Jobs)
+	return view, http.StatusOK, nil
+}
+
+// The HTTP service owns the timing database. Enrich both signed status and
+// stream snapshots here so the worker never needs access to SQLite.
+func (a *Admin) jobsWithBuildTimes(ctx context.Context, started time.Time, jobs []builder.BuildJob) []builder.BuildJob {
+	var targets []database.BuildTimeTarget
+	var indices []int
+	for i, job := range jobs {
+		if job.ActiveElapsedSeconds != nil && job.ABI != "" {
+			targets = append(targets, database.BuildTimeTarget{Package: job.Package, Origin: job.Origin, ABI: job.ABI})
+			indices = append(indices, i)
+		}
+	}
+	if len(targets) == 0 {
+		return jobs
+	}
+	times, err := a.cfg.DB.LastBuildDurations(ctx, started, targets)
+	if err != nil || len(times) == 0 {
+		// An unavailable historical estimate must not interrupt live updates.
+		return jobs
+	}
+	jobs = slices.Clone(jobs)
+	for n, target := range targets {
+		if seconds, ok := times[target]; ok {
+			jobs[indices[n]].LastBuildSeconds = new(seconds)
+		}
+	}
+	return jobs
 }
 
 func writeBuildError(w http.ResponseWriter, status int, err error) {
@@ -149,8 +190,13 @@ func (a *Admin) buildIssues(ctx context.Context, args runQuery) (builder.BuildIs
 	return builder.ReadBuildIssues(ctx, a.cfg.Builder, args.Started)
 }
 
-func (a *Admin) buildResults(ctx context.Context, args runQuery) (builder.BuildResultsView, error) {
-	return builder.ReadBuildResults(ctx, a.cfg.Builder, args.Started)
+type resultsQuery struct {
+	Started   time.Time `json:"started"`
+	HideEmpty bool      `json:"hide_empty"`
+}
+
+func (a *Admin) buildResults(ctx context.Context, args resultsQuery) (builder.BuildResultsView, error) {
+	return builder.ReadBuildResults(ctx, a.cfg.Builder, args.Started, args.HideEmpty)
 }
 
 type logQuery struct {

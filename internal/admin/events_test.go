@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"github.com/inkeliz/poudrine/internal/broker"
 	"github.com/inkeliz/poudrine/internal/builder"
 	"github.com/inkeliz/poudrine/internal/config"
+	"github.com/inkeliz/poudrine/internal/database"
 	"github.com/inkeliz/poudrine/internal/routes"
 	"github.com/inkeliz/poudrine/internal/testutil"
 )
@@ -29,19 +31,33 @@ func TestLiveBuildEvents(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			admin := testAdmin(t)
+			const configured, lastSlot = 800, 901
+			admin.cfg.Builder.Jobs = configured
 			key := enrollAdmin(t, admin)
-			initial := builder.BuildStatus{Stage: "building", Active: true, Log: []string{"configure\ncompile"}}
+			started := time.Now().UTC()
+			initial := builder.BuildStatus{Stage: "building", Active: true, Started: started, Log: []string{"configure\ncompile"}}
 			// A real large queue must pass the broker's frame limit without
 			// losing jobs or mixing a control response into the event stream.
 			for i := range 750 {
-				initial.Jobs = append(initial.Jobs, builder.BuildJob{ID: fmt.Sprint(i), Package: strings.Repeat("a", 120), Origin: "devel/" + strings.Repeat("b", 120), Phase: "build"})
+				initial.Jobs = append(initial.Jobs, builder.BuildJob{ID: fmt.Sprint(i + 1), Package: strings.Repeat("a", 120), Origin: "devel/" + strings.Repeat("b", 120), Phase: "build"})
 			}
+			// A legacy standalone status lacks capacity; retain every observed slot.
+			initial.Jobs[749].ID = fmt.Sprint(lastSlot)
 			initial.Jobs[0].ElapsedSeconds = new(int64(0))
+			initial.Jobs[0].Package, initial.Jobs[0].Origin, initial.Jobs[0].ABI = "curl-9", "ftp/curl", "freebsd:15:amd64"
+			initial.Jobs[0].ActiveElapsedSeconds = new(int64(0))
 			initial.Jobs[0].CPUPercent = new(0.0)
 			initial.Jobs[749].ElapsedSeconds = new(int64(425))
 			initial.Jobs[749].CPUPercent = new(287.4)
 			initial.Jobs[749].MemoryBytes = new(int64(1 << 30))
 			initial.Jobs[749].ProgressPercent = new(63)
+			prior := database.BuildRecord{Started: started.Add(-time.Hour), Finished: started.Add(-time.Minute),
+				Package: "curl-8", Origin: "ftp/curl", ABI: "freebsd:15:amd64", Outcome: "succeeded", BuildSeconds: new(int64(90))}
+			if err := admin.cfg.DB.RecordBuilds(t.Context(), []database.BuildRecord{prior}); err != nil {
+				t.Fatal(err)
+			}
+			wantJobs := slices.Clone(initial.Jobs)
+			wantJobs[0].LastBuildSeconds = prior.BuildSeconds
 			var saved atomic.Value
 			saved.Store(initial)
 			admin.cfg.Build = func() (builder.BuildStatus, error) { return saved.Load().(builder.BuildStatus), nil }
@@ -51,7 +67,8 @@ func TestLiveBuildEvents(t *testing.T) {
 				return err
 			}
 			if mode == "supervised" {
-				worker := &builder.Builder{}
+				worker := &builder.Builder{Cfg: admin.cfg.Builder}
+				initial.BuilderCapacity = lastSlot
 				worker.RestoreCheckpoint(&builder.WorkerCheckpoint{Status: initial})
 				var authority *broker.Authority
 				admin, authority = supervisedTestAdmin(t, admin.cfg, key, worker)
@@ -63,6 +80,11 @@ func TestLiveBuildEvents(t *testing.T) {
 				}
 			}
 			adminResponse(t, admin, httptest.NewRequest(routes.BuildEvents.Method, routes.BuildEvents.Path, nil), http.StatusUnauthorized)
+			snapshot := adminResponse(t, admin, testutil.SignedRequest(t, key, routes.BuildStatus.Method, routes.BuildStatus.Path, []byte("{}"), time.Now()), http.StatusOK)
+			var status buildView
+			if err := json.Unmarshal(snapshot.Body.Bytes(), &status); err != nil || status.BuilderCapacity != lastSlot || !reflect.DeepEqual(status.Jobs, wantJobs) {
+				t.Fatalf("signed build status with package timing: %v", err)
+			}
 			server := httptest.NewServer(admin.Handler())
 			defer server.Close()
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Second)
@@ -100,7 +122,7 @@ func TestLiveBuildEvents(t *testing.T) {
 				return view
 			}
 			view := next()
-			if !reflect.DeepEqual(view.Jobs, initial.Jobs) || view.CanForce != (mode == "supervised") || !reflect.DeepEqual(view.Log, initial.Log) {
+			if view.BuilderCapacity != lastSlot || !reflect.DeepEqual(view.Jobs, wantJobs) || view.CanForce != (mode == "supervised") || !reflect.DeepEqual(view.Log, initial.Log) {
 				t.Fatalf("incomplete initial event: %d jobs, can_force=%t", len(view.Jobs), view.CanForce)
 			}
 			duplicate := req.Clone(ctx)
@@ -114,7 +136,7 @@ func TestLiveBuildEvents(t *testing.T) {
 				t.Fatalf("replayed stream request returned %s", replay.Status)
 			}
 			update(builder.BuildStatus{Stage: "idle"})
-			if view := next(); view.Stage != "idle" || len(view.Jobs) != 0 {
+			if view := next(); view.Stage != "idle" || len(view.Jobs) != 0 || view.BuilderCapacity != configured {
 				t.Fatal("job completion failed to clear active builders")
 			}
 			if err := revoke(); err != nil {

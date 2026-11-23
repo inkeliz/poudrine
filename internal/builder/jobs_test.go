@@ -30,11 +30,11 @@ func TestConcurrentBuildJobsAndElapsed(t *testing.T) {
 	}
 	write(".poudriere.status.25", "idle:")
 	write(".poudriere.status.26", "build:www/nginx:nginx-2:101:101")
-	write(".poudriere.builders", strings.Join(ids, " ")+" 25 ../illegal 26")
+	write(".poudriere.builders", strings.Join(ids, " ")+" 25 ../illegal 26 27")
 	var logs jobLogs
-	jobs := runningJobs(root, 100, &logs)
-	if len(jobs) != 25 || jobs[24].ElapsedSeconds != nil {
-		t.Fatalf("unexpected jobs or future start %+v", jobs)
+	jobs, lastSlot := runningJobs(root, 100, &logs)
+	if lastSlot != 27 || len(jobs) != 25 || jobs[24].ElapsedSeconds != nil {
+		t.Fatalf("unexpected last slot %d or jobs %+v", lastSlot, jobs)
 	}
 	for i := range 24 {
 		j := jobs[i]
@@ -45,7 +45,7 @@ func TestConcurrentBuildJobsAndElapsed(t *testing.T) {
 	}
 	// Phase changes do not restart the package clock, including across pauses.
 	write(".poudriere.status.01", "package:devel/p01:p01-1:1:150")
-	next := runningJobs(root, 151, &logs)
+	next, _ := runningJobs(root, 151, &logs)
 	if *next[0].ElapsedSeconds != 150 || next[0].Phase != "package" || next[0].ProgressPercent != nil {
 		t.Fatalf("package phase: %+v", next[0])
 	}
@@ -72,7 +72,7 @@ func TestCompilerProgressFollowsPoudrierePhase(t *testing.T) {
 		if _, err := log.WriteString(appendText); err != nil {
 			t.Fatal(err)
 		}
-		percent := cursor.progress(root, "port-1")
+		_, percent := cursor.sample(root, "port-1", true)
 		if want < 0 && percent != nil || want >= 0 && (percent == nil || *percent != want) {
 			t.Fatalf("after %q: got %v, want %d", appendText[:min(100, len(appendText))], percent, want)
 		}
@@ -84,6 +84,72 @@ func TestCompilerProgressFollowsPoudrierePhase(t *testing.T) {
 	check("download [71%]\n[10/0] bad total\n[56/5] bad count\n", 37)
 	check(strings.Repeat("long line\n", 4000), 37)
 	check("[00:06:00] =======================<phase: stage          >============================\n[3/4] fake\n", -1)
+}
+
+func TestActiveJobTimeAcrossPauses(t *testing.T) {
+	var clock jobClock
+	check := func(start, now, want int64) {
+		t.Helper()
+		got := clock.activeSeconds(now, new(now-start))
+		if got == nil || *got != want {
+			t.Fatalf("job %d at %d: active %v, want %d", start, now, got, want)
+		}
+	}
+	clock.mark(true, 100)
+	check(80, 90, 10) // sample started before the stop was acknowledged
+	check(80, 110, 20)
+	check(80, 150, 20)
+	clock.mark(false, 160)
+	clock.mark(false, 170) // releasing a failed stop leaves the preceding pause intact
+	clock.mark(true, 200)
+	check(80, 240, 60)
+	check(180, 240, 20) // another builder took this job after the first pause
+	clock.mark(false, 250)
+	check(80, 260, 70)
+	check(255, 260, 5)
+	if clock.activeSeconds(260, nil) != nil {
+		t.Fatal("missing job start supplied an active duration")
+	}
+	clock.mark(true, -1)
+	if clock.activeSeconds(260, new(int64(20))) != nil {
+		t.Fatal("unknown stop time supplied an active duration")
+	}
+}
+
+func TestRunningJobsReadABIOutsideBuildPhase(t *testing.T) {
+	path := t.TempDir()
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := os.Mkdir(filepath.Join(path, "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, data string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(path, name), []byte(data), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var logs jobLogs
+	check := func(phase, pkg, abi string) {
+		t.Helper()
+		write(".poudriere.status.01", phase+":www/example:"+pkg+":10:20")
+		jobs, _ := runningJobs(root, 25, &logs)
+		if len(jobs) != 1 || jobs[0].ABI != abi {
+			t.Fatalf("%s %s: %+v, want ABI %q", phase, pkg, jobs, abi)
+		}
+	}
+	write(".poudriere.builders", "01")
+	check("starting", "example-2", "")
+	write("logs/example-2.log", "build started at ...\n")
+	check("fetch", "example-2", "")
+	write("logs/example-2.log", "build started at ...\nbuilding for: FreeBSD jail 15.0-RELEASE FreeBSD 15.0-RELEASE amd64\n")
+	check("configure", "example-2", "freebsd:15:amd64")
+	check("build", "example-2", "freebsd:15:amd64")
+	check("package", "example-2", "freebsd:15:amd64")
+	check("starting", "other-1", "")
 }
 
 func TestBuilderJailResourceAttribution(t *testing.T) {

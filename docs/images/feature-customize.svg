@@ -1,1 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><rect width="48" height="48" rx="12" fill="#fceeee"/><g transform="translate(12 12)" fill="none" stroke="#c62828" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"/><circle cx="8" cy="6" r="2" fill="#fceeee"/><circle cx="16" cy="12" r="2" fill="#fceeee"/><circle cx="10" cy="18" r="2" fill="#fceeee"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+  <title id="title">Package options</title>
+  <rect x="6" y="6" width="39" height="39" fill="#080907" stroke="#8b8c7e" stroke-width="2"/>
+  <rect x="2" y="2" width="40" height="40" fill="#ffd267" stroke="#080907" stroke-width="3"/>
+  <g fill="none" stroke="#080907" stroke-width="2.5">
+    <path d="M9 13h26M9 22h26M9 31h26"/>
+    <path fill="#ffd267" d="M14 10h6v6h-6zM25 19h6v6h-6zM17 28h6v6h-6z"/>
+  </g>
+</svg>

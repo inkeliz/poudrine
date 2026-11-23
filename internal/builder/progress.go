@@ -28,14 +28,17 @@ type BuildProgress struct {
 }
 
 type BuildJob struct {
-	ID              string   `json:"id"`
-	Origin          string   `json:"origin"`
-	Package         string   `json:"package"`
-	Phase           string   `json:"phase"`
-	ProgressPercent *int     `json:"progress_percent,omitempty"`
-	ElapsedSeconds  *int64   `json:"elapsed_seconds,omitempty"`
-	CPUPercent      *float64 `json:"cpu_percent,omitempty"`
-	MemoryBytes     *int64   `json:"memory_bytes,omitempty"`
+	ID                   string   `json:"id"`
+	Origin               string   `json:"origin"`
+	Package              string   `json:"package"`
+	Phase                string   `json:"phase"`
+	ABI                  string   `json:"abi,omitempty"`
+	ProgressPercent      *int     `json:"progress_percent,omitempty"`
+	ElapsedSeconds       *int64   `json:"elapsed_seconds,omitempty"`
+	ActiveElapsedSeconds *int64   `json:"active_elapsed_seconds,omitempty"`
+	CPUPercent           *float64 `json:"cpu_percent,omitempty"`
+	MemoryBytes          *int64   `json:"memory_bytes,omitempty"`
+	LastBuildSeconds     *int64   `json:"last_build_seconds,omitempty"` // Filled by the HTTP service from its build history.
 }
 
 const BuildNameFormat = "2006-01-02_15h04m05s.000000000"
@@ -121,13 +124,16 @@ func packageProgress(dir *os.Root) *BuildProgress {
 
 var jobPhase = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_/-]*$`)
 
-func runningJobs(dir *os.Root, now int64, logs *jobLogs) []BuildJob {
+func runningJobs(dir *os.Root, now int64, logs *jobLogs) ([]BuildJob, int64) {
 	var jobs []BuildJob
+	var lastSlot int64
 	next := make(jobLogs)
 	for id := range strings.FieldsSeq(progressValue(dir, "builders", 1<<20)) {
-		if _, err := strconv.ParseUint(id, 10, 32); err != nil {
+		slot, err := strconv.ParseUint(id, 10, 32)
+		if err != nil {
 			continue
 		}
+		lastSlot = max(lastSlot, int64(slot))
 		// Poudriere reports phase:origin:package:job_start:phase_start.
 		// The last two fields use monotonic seconds since boot.
 		status := progressValue(dir, "status."+id, 1024)
@@ -142,16 +148,17 @@ func runningJobs(dir *os.Root, now int64, logs *jobLogs) []BuildJob {
 				job.ElapsedSeconds = new(now - start)
 			}
 		}
-		if job.Phase == "build" {
-			key := id + ":" + status
-			cursor := (*logs)[key]
-			job.ProgressPercent = cursor.progress(dir, job.Package)
-			next[key] = cursor
+		key := id + ":" + job.Package
+		if len(fields) >= 4 {
+			key += ":" + fields[3]
 		}
+		cursor := (*logs)[key]
+		job.ABI, job.ProgressPercent = cursor.sample(dir, job.Package, job.Phase == "build")
+		next[key] = cursor
 		jobs = append(jobs, job)
 	}
 	*logs = next
-	return jobs
+	return jobs, lastSlot
 }
 
 var bulkPhases = map[string]string{
@@ -189,18 +196,24 @@ func (b *Builder) updateProgress(ctx context.Context, buildname string, logs *jo
 	}
 	defer dir.Close()
 	progress := packageProgress(dir)
-	var stamp unix.Timespec
-	now := int64(-1)
-	if unix.ClockGettime(unix.CLOCK_MONOTONIC, &stamp) == nil {
-		now = int64(stamp.Sec)
-	}
-	jobs := runningJobs(dir, now, logs)
+	now := monotonicSecond()
+	jobs, lastSlot := runningJobs(dir, now, logs)
 	sampleJobResources(ctx, dir, master, jobs)
 	phase, _, _ := strings.Cut(progressValue(dir, "status", 128), ":")
 	message := bulkPhases[phase]
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	for i := range jobs {
+		job := &jobs[i]
+		job.ActiveElapsedSeconds = b.jobClock.activeSeconds(now, job.ElapsedSeconds)
+	}
 	changed := false
+	// Poudriere numbers builders from one and may allocate fewer for a
+	// short queue. Keep the configured capacity and any larger live slot.
+	if lastSlot > max(b.status.BuilderCapacity, int64(b.Cfg.Jobs)) {
+		b.status.BuilderCapacity = lastSlot
+		changed = true
+	}
 	if progress != nil && (b.status.Progress == nil || *progress != *b.status.Progress) {
 		b.status.Progress = progress
 		changed = true
@@ -216,4 +229,47 @@ func (b *Builder) updateProgress(ctx context.Context, buildname string, logs *jo
 	if changed {
 		b.persistLocked()
 	}
+}
+
+func monotonicSecond() int64 {
+	var stamp unix.Timespec
+	if unix.ClockGettime(unix.CLOCK_MONOTONIC, &stamp) != nil {
+		return -1
+	}
+	return int64(stamp.Sec)
+}
+
+// Times are seconds on Poudriere's job clock. Each interval records a
+// confirmed process stop; an open interval ends at the current sample.
+type jobPause struct{ start, end int64 }
+
+type jobClock struct {
+	pauses      []jobPause
+	unavailable bool
+}
+
+func (c *jobClock) mark(paused bool, now int64) {
+	if now < 0 {
+		c.unavailable = true
+	} else if paused {
+		c.pauses = append(c.pauses, jobPause{start: now, end: -1})
+	} else if n := len(c.pauses); n > 0 && c.pauses[n-1].end < 0 {
+		c.pauses[n-1].end = now
+	}
+}
+
+func (c *jobClock) activeSeconds(now int64, elapsed *int64) *int64 {
+	if elapsed == nil || c.unavailable {
+		return nil
+	}
+	active := *elapsed
+	start := now - active
+	for _, pause := range c.pauses {
+		end := now
+		if pause.end >= 0 {
+			end = min(pause.end, now)
+		}
+		active -= max(0, end-max(start, pause.start))
+	}
+	return &active
 }

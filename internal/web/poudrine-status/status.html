@@ -3,135 +3,130 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#151615">
   <title>Repository status · Poudrine</title>
   <style>
-    :root {
-      color-scheme: light;
-      --ink: #2c2424;
-      --accent: #c62828;
-      --line: #e6dede;
-      --sans: "Instrument Sans", "Inter", system-ui, sans-serif;
-      --mono: "IBM Plex Mono", ui-monospace, "DejaVu Sans Mono", monospace;
-      font: 16px/1.5 var(--sans);
-      background: #faf7f6;
+    {{template "theme"}}
+    .status-hero, .status-metric {
+      background: var(--surface);
+      border: 2px solid var(--edge);
+      box-shadow: var(--shadow);
+    }
+    .status-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+    }
+    .status-copy {
+      align-self: center;
+      padding: var(--inset);
+    }
+    .status-state {
+      display: inline-flex;
+      align-items: center;
+      gap: .6rem;
+      padding: .4rem .65rem;
+      background: var(--well);
+      border: 1px solid currentColor;
+      color: var(--green);
+      font: var(--weight-semibold) .875rem/1.4 var(--sans);
+    }
+    .status-state::before {
+      content: "";
+      width: .55rem;
+      height: .55rem;
+      background: currentColor;
+    }
+    .status-state.waiting { color: var(--gold); }
+    .status-copy h1 {
+      margin: 1.2rem 0 .85rem;
+      max-width: 14ch;
       color: var(--ink);
+      font: var(--weight-semibold) clamp(2.5rem, 6.4vw, 5.6rem)/1.04 var(--display);
+      letter-spacing: -.03em;
+      text-wrap: balance;
     }
-    * { box-sizing: border-box; }
-    body, h1, p, dl, dd { margin: 0; }
-    .wrap { width: min(70rem, calc(100% - clamp(2rem, 8vw, 7rem))); margin-inline: auto; }
-    .masthead { background: #fffafa; border-bottom: 1px solid var(--line); }
-    .bar { min-height: 4.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-    .brand { display: inline-flex; align-items: center; gap: .6rem; color: var(--ink); font-size: 1.4rem; font-weight: 750; letter-spacing: -.055em; text-decoration: none; }
-    .brand::before {
-      content: ""; width: 1.62rem; height: 1.86rem; background: var(--accent);
-      clip-path: polygon(0 24%, 50% 0, 100% 24%, 50% 49%, 50% 61%, 100% 36%, 100% 52%, 50% 77%, 50% 89%, 100% 64%, 100% 76%, 50% 100%, 0 76%);
+    .status-copy p {
+      max-width: 39ch;
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.05rem;
+      line-height: 1.5;
     }
-    a { color: var(--accent); text-underline-offset: .22em; }
-    a:focus-visible { outline: 3px solid #a7651a; outline-offset: 4px; }
-    .links { display: flex; align-items: center; gap: clamp(.8rem, 3vw, 1.7rem); }
-    .links a { padding: .55rem 0; font-size: .9rem; font-weight: 600; }
-    main { padding-block: clamp(1.5rem, 4.8vw, 4rem); }
-    .panel { border: 1px solid var(--line); border-radius: 1.15rem; overflow: hidden; background: white; }
-    .hero { isolation: isolate; position: relative; overflow: hidden; background: #302323; color: #fffafa; }
-    .copy { position: relative; padding: clamp(1.5rem, 4.8vw, 4rem); width: 66%; }
-    .state {
-      display: inline-flex; align-items: center; gap: .5rem; padding: .23rem .65rem;
-      border: 1px solid #745b5b; border-radius: 2rem; background: #423030;
-      color: #f0e2e2; font: .76rem/1.5 var(--mono);
+    .status-hero > .overview-art { border-inline-start: 2px solid var(--edge); }
+    .status-metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--gap);
+      margin: var(--gap) 0 0;
     }
-    .state::before { content: ""; width: .46rem; height: .46rem; border-radius: 50%; background: #a9ddb1; flex: none; }
-    .unavailable .state::before { background: #e4c289; }
-    h1 { margin-block: 1.05rem .7rem; font: 650 clamp(2.45rem, 5.6vw, 4.45rem)/1.04 "Bricolage Grotesque", var(--sans); letter-spacing: -.067em; }
-    .copy p { color: #e2d2d2; max-width: 35em; font-size: clamp(.98rem, 1.4vw, 1.1rem); }
-    .art {
-      position: absolute; z-index: -1; inset: 0 0 0 auto; width: 37%; overflow: hidden; pointer-events: none;
-      background: radial-gradient(ellipse at 72% 58%, #7a4141, transparent 73%);
+    .status-metric {
+      margin: 0;
+      padding: var(--inset);
     }
-    .art::before {
-      content: ""; position: absolute; inset: -35%; opacity: .28; mask-image: linear-gradient(90deg, transparent 12%, black 48%);
-      background: repeating-linear-gradient(30deg, transparent 0 26px, #c99b9b 26px 27px, transparent 27px 52px),
-                  repeating-linear-gradient(-30deg, transparent 0 26px, #c99b9b 26px 27px, transparent 27px 52px);
+    .status-metric dt {
+      margin: 0;
+      font: var(--weight-semibold) 1rem/1.45 var(--sans);
     }
-    .parcels { position: absolute; top: 48%; left: 50%; width: clamp(8rem, 15vw, 12rem); aspect-ratio: .91; transform: translate(-50%, -50%) rotate(-3deg); }
-    .parcel { position: absolute; width: 87%; height: 48%; filter: drop-shadow(0 8px 5px #27191964); }
-    .parcel i, .parcel b, .parcel em { position: absolute; inset: 0; display: block; }
-    .parcel i { background: var(--lid); clip-path: polygon(0 32%, 50% 0, 100% 32%, 50% 65%); }
-    .parcel b { background: var(--left); clip-path: polygon(0 32%, 50% 65%, 50% 100%, 0 67%); }
-    .parcel em { background: var(--right); clip-path: polygon(50% 65%, 100% 32%, 100% 67%, 50% 100%); }
-    .parcel b::after { content: ""; position: absolute; width: 12%; height: 7%; left: 9%; top: 52%; background: #fff0f0; transform: skewY(22deg); }
-    .base { bottom: 1%; left: 1%; --lid: #d77878; --left: #c25555; --right: #963d3d; }
-    .middle { bottom: 24%; left: 7%; --lid: #eda2a2; --left: #d76c6c; --right: #b04444; }
-    .top { bottom: 47%; left: 13%; --lid: #f9d2d2; --left: #ed9696; --right: #cf6464; }
-    .top i::after { content: ""; position: absolute; inset: 0; clip-path: polygon(20% 19%, 30% 13%, 80% 45%, 70% 52%); background: #df8686; }
-    .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .metric { padding: clamp(1.4rem, 4vw, 3rem) clamp(1.5rem, 4.8vw, 4rem); }
-    .metric + .metric { border-inline-start: 1px solid var(--line); }
-    dt { font-size: 1rem; font-weight: 650; }
-    .count { margin-block: .3rem .5rem; font: 550 clamp(2.5rem, 5.5vw, 4.3rem)/1.12 var(--mono); letter-spacing: -.075em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-    .ahead .count { color: var(--accent); }
-    .unavailable .count { color: #7e7171; }
-    .detail { color: #6e6262; font-size: .91rem; }
-    @media (max-width: 42rem) {
-      .bar { min-height: 3.7rem; }
-      .copy { width: 76%; }
-      .art { width: 29%; }
-      .parcels { width: clamp(4.1rem, 16vw, 6.3rem); }
+    .status-count {
+      margin: .65rem 0 .85rem;
+      color: var(--ink);
+      font: var(--weight-semibold) clamp(2.8rem, 6.8vw, 5.25rem)/1.02 var(--display);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -.03em;
+      overflow-wrap: anywhere;
     }
-    @media (max-width: 31rem) {
-      .metrics { grid-template-columns: 1fr; }
-      .metric + .metric { border-inline-start: 0; border-block-start: 1px solid var(--line); }
-      .copy { width: 100%; }
-      h1 { max-width: 68%; }
-      .copy p { max-width: 82%; }
-      .art { bottom: 32%; }
-    }
-    @media (max-width: 22rem) {
-      .brand { font-size: 1.15rem; gap: .35rem; }
-      .brand::before { width: 1.3rem; height: 1.5rem; }
-      .bar, .links { gap: .65rem; }
-      .links a { white-space: nowrap; }
-      .parcels { top: 30%; width: 3.8rem; }
+    .status-ahead .status-count { color: var(--accent); }
+    .status-metrics.waiting .status-count { color: var(--muted); }
+    .status-detail { margin: 0; color: var(--muted); line-height: 1.5; }
+    @media (max-width: 40rem) {
+      .status-hero { grid-template-columns: 1fr; }
+      .status-hero > .overview-art {
+        height: 8.5rem;
+        min-height: 0;
+        border-inline-start: 0;
+        border-top: 2px solid var(--edge);
+      }
+      .status-hero .parcels { width: min(50%, 7.5rem); }
+      .status-metrics { grid-template-columns: 1fr; }
     }
   </style>
 </head>
-<body>
-  <header class="masthead">
-    <div class="wrap bar">
-      <a class="brand" href="index.html">Poudrine</a>
-      <nav class="links" aria-label="Repository status">
-        <a href="index.html">Refresh</a>
-      </nav>
+<body class="status-page">
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-head">
+    <div class="bar">
+      <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true"></span>Poudrine</a>
+      <nav aria-label="Repository status"><a href="index.html">Refresh</a></nav>
     </div>
   </header>
-  <main class="wrap">
-    <section class="panel{{if not .Available}} unavailable{{end}}" aria-labelledby="title">
-      <header class="hero">
-        <div class="art" aria-hidden="true">
-          <div class="parcels">
-            <div class="parcel base"><i></i><b></b><em></em></div>
-            <div class="parcel middle"><i></i><b></b><em></em></div>
-            <div class="parcel top"><i></i><b></b><em></em></div>
-          </div>
+  <main id="main">
+    <header class="status-hero">
+      <div class="status-copy">
+        <span class="status-state{{if not .Available}} waiting{{end}}">{{if .Available}}Catalog available{{else}}Statistics unavailable{{end}}</span>
+        <h1>Repository status</h1>
+        <p>{{if .Available}}FreeBSD packages and local Poudriere builds in one signed catalog.{{else}}The public catalog counts are unavailable. Refresh to check again.{{end}}</p>
+      </div>
+      <div class="overview-art" aria-hidden="true">
+        <div class="parcels">
+          <div class="parcel base"><i></i><b></b><em></em></div>
+          <div class="parcel middle"><i></i><b></b><em></em></div>
+          <div class="parcel top"><i></i><b></b><em></em></div>
         </div>
-        <div class="copy">
-          <span class="state">{{if .Available}}Catalog available{{else}}Statistics unavailable{{end}}</span>
-          <h1 id="title">Package repository</h1>
-          <p>FreeBSD packages and local Poudriere builds in one signed catalog.</p>
-        </div>
-      </header>
-      <dl class="metrics">
-        <div class="metric">
-          <dt>Available packages</dt>
-          <dd class="count" lang="{{.Locale.Tag}}">{{if .Available}}{{.Locale.Sprint .Packages}}{{else}}—{{end}}</dd>
-          <dd class="detail">All packages in the published catalog.</dd>
-        </div>
-        <div class="metric ahead">
-          <dt>Ahead of FreeBSD</dt>
-          <dd class="count" lang="{{.Locale.Tag}}">{{if .Available}}{{.Locale.Sprint .Ahead}}{{else}}—{{end}}</dd>
-          <dd class="detail">Local builds newer than their FreeBSD counterparts.</dd>
-        </div>
-      </dl>
-    </section>
+      </div>
+    </header>
+    <dl class="status-metrics{{if not .Available}} waiting{{end}}">
+      <div class="status-metric">
+        <dt>Available packages</dt>
+        <dd class="status-count" lang="{{.Locale.Tag}}">{{if .Available}}{{.Locale.Sprint .Packages}}{{else}}—{{end}}</dd>
+        <dd class="status-detail">Packages available to install from the published catalog.</dd>
+      </div>
+      <div class="status-metric status-ahead">
+        <dt>Ahead of FreeBSD</dt>
+        <dd class="status-count" lang="{{.Locale.Tag}}">{{if .Available}}{{.Locale.Sprint .Ahead}}{{else}}—{{end}}</dd>
+        <dd class="status-detail">Local builds newer than their FreeBSD counterparts.</dd>
+      </div>
+    </dl>
   </main>
 </body>
 </html>

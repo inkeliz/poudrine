@@ -5,11 +5,14 @@ import (
 	"html/template"
 
 	"github.com/inkeliz/poudrine/internal/statusproto"
+	webtheme "github.com/inkeliz/poudrine/internal/web"
 	statusweb "github.com/inkeliz/poudrine/internal/web/poudrine-status"
 	"github.com/inkeliz/poudrine/internal/weblocale"
 )
 
-var statusPage = template.Must(template.New("status").Parse(statusweb.HTML))
+// Inline the embedded theme so the confined reader can serve a complete page.
+var theme = template.Must(template.New("theme").Parse(webtheme.CSS))
+var statusPage = template.Must(theme.New("status").Parse(statusweb.HTML))
 
 func renderStatusPage(locale weblocale.Page, s statusproto.Counts, available bool) ([]byte, error) {
 	data := struct {

@@ -3,8 +3,8 @@ GO ?= go
 TAR ?= tar
 DESTDIR ?=
 LOCALBASE = /usr/local
-release_files = poudrine poudrine-status rc.d examples/poudrine.json Makefile README.md
-source_files = *.go go.mod go.sum cmd internal rc.d examples Makefile README.md
+release_files = poudrine poudrine-status rc.d examples/poudrine.json Makefile README.md docs
+source_files = *.go go.mod go.sum cmd internal rc.d examples Makefile README.md docs
 
 .PHONY: all test build install install-built dist
 all: build
@@ -16,7 +16,7 @@ build:
 	CGO_ENABLED=0 GOOS=freebsd ${GO} build -trimpath -o poudrine ./cmd/poudrine
 	CGO_ENABLED=0 GOOS=freebsd ${GO} build -trimpath -o poudrine-status ./cmd/poudrine-status
 
-# Binary distributions contain only the executables and installation files.
+# Install directly from a binary distribution, or build first in a source tree.
 install:
 	@if test -f go.mod; then ${MAKE} build; fi
 	@${MAKE} install-built

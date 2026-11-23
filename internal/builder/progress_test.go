@@ -64,6 +64,9 @@ esac
 		return s.Active && s.Trigger == "scheduled" && len(s.Jobs) == 1 && s.Progress != nil
 	})
 	active := b.Status()
+	if active.BuilderCapacity != int64(cfg.Jobs) {
+		t.Fatalf("two allocated slots reduced the configured capacity to %d, want %d", active.BuilderCapacity, cfg.Jobs)
+	}
 	if active.Jobs[0].Package != "curl-8.0" || active.Message != "Building packages" || active.Progress.Total != 9 || active.Progress.Built != 1 || active.Origins == nil || *active.Origins != 1 || active.NextDelaySeconds != cfg.Interval.Seconds() {
 		t.Fatalf("unexpected progress %+v", active)
 	}

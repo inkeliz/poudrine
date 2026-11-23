@@ -40,11 +40,20 @@ func (a *Authority) handleBuildRetry(ctx context.Context, m Message) Reply {
 	var args struct {
 		Started time.Time       `json:"started"`
 		Package json.RawMessage `json:"package"`
+		Outcome json.RawMessage `json:"outcome"`
 	}
-	var pkg string
-	if !ValidQuery(m.Body, &args) || args.Started.IsZero() || args.Started.After(time.Now()) ||
-		(args.Package != nil && (json.Unmarshal(args.Package, &pkg) != nil || !packageinfo.ValidIssuePackage(pkg))) {
-		return Reply{Status: http.StatusBadRequest, Error: "Expected a build start time and an optional package name"}
+	var pkg, outcome string
+	if !ValidQuery(m.Body, &args) || args.Started.IsZero() || args.Started.After(time.Now()) {
+		return Reply{Status: http.StatusBadRequest, Error: "Expected a build start time and optional retry selector"}
+	}
+	if args.Package != nil && args.Outcome != nil {
+		return Reply{Status: http.StatusBadRequest, Error: "Choose either a package or an outcome to retry"}
+	}
+	if args.Package != nil && (json.Unmarshal(args.Package, &pkg) != nil || !packageinfo.ValidIssuePackage(pkg)) {
+		return Reply{Status: http.StatusBadRequest, Error: "Invalid package name for retry"}
+	}
+	if args.Outcome != nil && (json.Unmarshal(args.Outcome, &outcome) != nil || outcome != "failed" && outcome != "skipped") {
+		return Reply{Status: http.StatusBadRequest, Error: "Retry outcome must be failed or skipped"}
 	}
 	if a.Builder == nil {
 		return Reply{Status: http.StatusServiceUnavailable, Error: "Build worker unavailable"}
@@ -59,10 +68,21 @@ func (a *Authority) handleBuildRetry(ctx context.Context, m Message) Reply {
 		log.Printf("reading Poudriere results for retry: %v", err)
 		return Reply{Status: http.StatusServiceUnavailable, Error: "Cannot read Poudriere results for this run"}
 	}
+	// An outcome selects explicit bulk targets. Poudriere resolves any
+	// missing prerequisites when building those ports.
+	switch outcome {
+	case "failed":
+		skipped = nil
+	case "skipped":
+		failed = nil
+	}
 	origins := affectedOrigins(failed, skipped, pkg)
 	if len(origins) == 0 {
 		if pkg != "" {
 			return Reply{Status: http.StatusNotFound, Error: "This package has no failure or skip in that run"}
+		}
+		if outcome != "" {
+			return Reply{Status: http.StatusConflict, Error: "This run has no " + outcome + " packages to retry"}
 		}
 		return Reply{Status: http.StatusConflict, Error: "This run has no failed or skipped packages to retry"}
 	}
@@ -84,7 +104,7 @@ func affectedOrigins(failed, skipped []builder.BuildIssue, pkg string) []string 
 	}
 	for _, item := range skipped {
 		originOf[item.Package] = item.Origin
-		if item.BlockedBy != "" {
+		if pkg != "" && item.BlockedBy != "" {
 			related[item.Package] = append(related[item.Package], item.BlockedBy)
 			related[item.BlockedBy] = append(related[item.BlockedBy], item.Package)
 		}

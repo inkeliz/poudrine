@@ -44,6 +44,7 @@ type BuildStatus struct {
 	Origins          *int           `json:"origins,omitempty"`
 	Outcome          string         `json:"outcome,omitempty"`
 	Progress         *BuildProgress `json:"progress,omitempty"`
+	BuilderCapacity  int64          `json:"builder_capacity,omitempty"`
 	Jobs             []BuildJob     `json:"jobs,omitempty"`
 	Stage            string         `json:"stage"`
 	Message          string         `json:"message"`
@@ -86,6 +87,7 @@ type Builder struct {
 	hours           configpkg.WorkingHours
 	mu              sync.Mutex  `json:"-"`
 	status          BuildStatus `json:"-"`
+	jobClock        jobClock
 	retryOrigins    map[string]struct{}
 	LastWrite       time.Time `json:"-"`
 	ready           bool
@@ -138,6 +140,7 @@ func (b *Builder) RequestBuild() bool {
 
 func (b *Builder) snapshotLocked() BuildStatus {
 	s := b.status
+	s.BuilderCapacity = max(s.BuilderCapacity, int64(b.Cfg.Jobs))
 	s.RetryPending = len(b.retryOrigins)
 	s.Log = slices.Clone(s.Log)
 	s.Jobs = slices.Clone(s.Jobs)
@@ -145,6 +148,8 @@ func (b *Builder) snapshotLocked() BuildStatus {
 		job := &s.Jobs[i]
 		job.ProgressPercent = cloneValue(job.ProgressPercent)
 		job.ElapsedSeconds = cloneValue(job.ElapsedSeconds)
+		job.ActiveElapsedSeconds = cloneValue(job.ActiveElapsedSeconds)
+		job.LastBuildSeconds = cloneValue(job.LastBuildSeconds)
 		job.CPUPercent = cloneValue(job.CPUPercent)
 		if s.Paused && job.CPUPercent != nil {
 			// ps's decaying CPU average can outlive a confirmed SIGSTOP.
@@ -682,6 +687,7 @@ func (b *Builder) complete(ctx context.Context, err error, bulk bool, finished, 
 	b.mu.Lock()
 	b.status.Active = false
 	b.status.Jobs = nil
+	b.status.BuilderCapacity = 0
 	b.status.Finished = finished
 	b.status.NextRun = next
 	b.status.NextDelaySeconds = 0

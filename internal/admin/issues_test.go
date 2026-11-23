@@ -83,6 +83,7 @@ func TestPackageFailureManagement(t *testing.T) {
 	}
 	latest := readResults(struct{}{})
 	if !latest.Started.Equal(clean) || len(latest.Runs) != 2 || !latest.Runs[0].Equal(clean) || !latest.Runs[1].Equal(started) ||
+		latest.Compiled[clean] != 2 || latest.Compiled[started] != 0 ||
 		len(latest.Succeeded) != 2 || len(latest.Failed) != 0 || len(latest.Skipped) != 0 {
 		t.Fatalf("latest run results: %+v", latest)
 	}
@@ -92,14 +93,23 @@ func TestPackageFailureManagement(t *testing.T) {
 	if err := json.Unmarshal(query(routes.BuildLog.Path, map[string]any{"started": clean, "package": "curl-1"}, 200).Body.Bytes(), &page); err != nil || page.Text != "successful build\n" {
 		t.Fatalf("successful package log: %+v, %v", page, err)
 	}
+	preparing := clean.Add(time.Minute)
+	if err := os.Mkdir(filepath.Join(filepath.Dir(run), preparing.Format(builder.BuildNameFormat)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	filtered := readResults(map[string]any{"hide_empty": true})
+	if !filtered.Started.Equal(clean) || len(filtered.Runs) != 2 || !filtered.Runs[1].Equal(started) ||
+		filtered.Compiled[clean] != 2 || len(filtered.Compiled) != 2 {
+		t.Fatalf("hide empty lost a run with failures or included the unfinished run: %+v", filtered)
+	}
+	filtered = readResults(map[string]any{"started": started, "hide_empty": true})
+	if !filtered.Started.Equal(started) || filtered.Compiled[clean] != 2 || len(filtered.Failed) != 1 {
+		t.Fatalf("failed run or legacy unique compiled count unavailable: %+v", filtered)
+	}
 	testutil.WriteFile(t, filepath.Join(run, ".poudriere.ports.built"), []byte("ftp/curl curl-0 9\n"))
 	old := readResults(map[string]any{"started": started})
 	if !old.Started.Equal(started) || len(old.Succeeded) != 1 || old.Succeeded[0].Package != "curl-0" || len(old.Failed) != 1 || old.Failed[0].Package != pkg || len(old.Skipped) != 2 {
 		t.Fatalf("selected historical run lost mixed results: %+v", old)
-	}
-	preparing := clean.Add(time.Minute)
-	if err := os.Mkdir(filepath.Join(filepath.Dir(run), preparing.Format(builder.BuildNameFormat)), 0755); err != nil {
-		t.Fatal(err)
 	}
 	idle := readResults(struct{}{})
 	if !idle.Started.Equal(preparing) || len(idle.Runs) != 3 || idle.Succeeded == nil || idle.Failed == nil || idle.Skipped == nil ||
@@ -107,6 +117,24 @@ func TestPackageFailureManagement(t *testing.T) {
 		t.Fatalf("run with no completed work: %+v", idle)
 	}
 	query(routes.BuildResults.Path, map[string]any{"started": started.Add(-time.Hour)}, 404)
+	testutil.WriteFile(t, filepath.Join(cleanDir, ".poudriere.stats_built"), []byte("27\n"))
+	if fast := readResults(struct{}{}); fast.Compiled[clean] != 27 {
+		t.Fatalf("retained run lost the native compiled counter: %v", fast.Compiled)
+	}
+	// A complete skipped result belongs in the picker even with no successes
+	// or failures. A writer's partial final record does not make a run visible.
+	skipped := preparing.Add(time.Minute)
+	skippedList := filepath.Join(filepath.Dir(run), skipped.Format(builder.BuildNameFormat), ".poudriere.ports.skipped")
+	record := []byte("devel/tool tool-1 dep-1")
+	testutil.WriteFile(t, skippedList, record)
+	if partial := readResults(map[string]any{"hide_empty": true}); partial.Started.Equal(skipped) {
+		t.Fatal("partial skipped record made its run visible")
+	}
+	testutil.WriteFile(t, skippedList, append(record, '\n'))
+	onlySkipped := readResults(map[string]any{"hide_empty": true})
+	if !onlySkipped.Started.Equal(skipped) || len(onlySkipped.Skipped) != 1 || onlySkipped.Compiled[skipped] != 0 {
+		t.Fatalf("skipped-only run unavailable: %+v", onlySkipped)
+	}
 	query(routes.BuildResults.Path, map[string]any{"started": "../repository.key"}, 400)
 	body, err := json.Marshal(args)
 	if err != nil {

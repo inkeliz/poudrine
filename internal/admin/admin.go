@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	brokerpkg "github.com/inkeliz/poudrine/internal/broker"
 	builderpkg "github.com/inkeliz/poudrine/internal/builder"
@@ -25,6 +26,7 @@ import (
 	"github.com/inkeliz/poudrine/internal/fsutil"
 	"github.com/inkeliz/poudrine/internal/requestauth"
 	"github.com/inkeliz/poudrine/internal/routes"
+	webtheme "github.com/inkeliz/poudrine/internal/web"
 	poudrineweb "github.com/inkeliz/poudrine/internal/web/poudrine"
 	"github.com/inkeliz/poudrine/internal/weblocale"
 )
@@ -101,8 +103,10 @@ func (a *Admin) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", a.index)
 	mux.HandleFunc("GET /admin", a.management)
+	mux.HandleFunc("GET /fonts/{font}", webtheme.ServeFont)
 	mux.HandleFunc("GET /style.css", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, poudrineweb.Files, "style.css")
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		http.ServeContent(w, r, "style.css", time.Time{}, strings.NewReader(poudrineweb.Stylesheet))
 	})
 	script := func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, poudrineweb.Files, "poudrine.js")
@@ -154,6 +158,7 @@ func (a *Admin) Handler() http.Handler {
 	mux.HandleFunc(routes.RetryBuild.Pattern(), a.signed(a.queueBuild))
 	mux.HandleFunc(routes.ForceBuild.Pattern(), a.signed(a.queueBuild))
 	mux.HandleFunc(routes.BuildHistory.Pattern(), a.signed(queryJSON(a.buildHistory, writeDBQueryError)))
+	mux.HandleFunc(routes.HistoryPackages.Pattern(), a.signed(queryJSON(a.cfg.DB.BuildHistoryPackages, writeDBQueryError)))
 	mux.HandleFunc(routes.Clients.Pattern(), a.signedEmptyQuery(listView(a.cfg.Clients)))
 	mux.HandleFunc(routes.Tracked.Pattern(), a.signedEmptyQuery(listView(a.cfg.Tracked)))
 	mux.HandleFunc(routes.PushKey.Pattern(), a.signedEmptyQuery(func(w http.ResponseWriter, r *http.Request, _ []byte) {

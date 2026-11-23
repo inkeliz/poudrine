@@ -214,6 +214,14 @@ func TestConfinement(t *testing.T) {
 		if got, ok := readCounts(fd); !ok || got != (statusproto.Counts{Packages: 8, Ahead: 2}) {
 			t.Fatal("confined snapshot read", got)
 		}
+		handler := &statusHandler{fd: fd}
+		for _, path := range []string{"/fonts/sora-latin.woff2", "/fonts/sora-latin-ext.woff2", "/fonts/atkinson-hyperlegible-next.woff2", "/fonts/geist-mono.woff2"} {
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+			if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "font/woff2" || !bytes.HasPrefix(w.Body.Bytes(), []byte("wOF2")) {
+				t.Fatalf("confined font request %s: %d", path, w.Code)
+			}
+		}
 		return
 	}
 	dir := t.TempDir()

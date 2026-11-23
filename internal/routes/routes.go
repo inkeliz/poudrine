@@ -36,6 +36,7 @@ var (
 	BuildResults    = Route{requestauth.Query, BuildStatusPath + "/results"}
 	BuildLog        = Route{requestauth.Query, BuildStatusPath + "/log"}
 	BuildHistory    = Route{requestauth.Query, BuildStatusPath + "/history"}
+	HistoryPackages = Route{requestauth.Query, BuildHistory.Path + "/packages"}
 	RetryBuild      = Route{http.MethodPost, RetryBuildPath}
 	ForceBuild      = Route{http.MethodPost, BuildStatusPath + "/force"}
 	Origins         = Route{requestauth.Query, "/api/admin/origins"}
