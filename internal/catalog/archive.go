@@ -11,6 +11,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base32"
 	"encoding/hex"
@@ -206,7 +207,7 @@ func findFingerprint(dir, hash string) (bool, error) {
 		if !fpFunction.Match(b) || match == nil {
 			return false, fmt.Errorf("invalid pkg fingerprint %q", e.Name())
 		}
-		if strings.EqualFold(string(match[1]), hash) {
+		if constantTimeHexEqual(string(match[1]), hash) {
 			return true, nil
 		}
 	}
@@ -325,9 +326,9 @@ func packageHashMatches(sum string, h hash.Hash) bool {
 	digest := h.Sum(nil)
 	switch kind {
 	case "1", "8", "10", "11":
-		return strings.EqualFold(value, hex.EncodeToString(digest))
+		return constantTimeHexEqual(value, hex.EncodeToString(digest))
 	case "12", "13", "14":
-		return value == pkgBase32.EncodeToString(digest)
+		return subtle.ConstantTimeCompare([]byte(value), []byte(pkgBase32.EncodeToString(digest))) == 1
 	}
 	// pkg's historical BASE32 codes consume bits from the low end first.
 	var s strings.Builder
@@ -345,5 +346,14 @@ func packageHashMatches(sum string, h hash.Hash) bool {
 	if bits > 0 {
 		s.WriteByte(pkgAlphabet[pending&31])
 	}
-	return value == s.String()
+	return subtle.ConstantTimeCompare([]byte(value), []byte(s.String())) == 1
+}
+
+func constantTimeHexEqual(a, b string) bool {
+	left, err := hex.DecodeString(a)
+	if err != nil {
+		return false
+	}
+	right, err := hex.DecodeString(b)
+	return err == nil && subtle.ConstantTimeCompare(left, right) == 1
 }

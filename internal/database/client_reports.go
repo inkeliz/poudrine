@@ -1,8 +1,8 @@
 package database
 
 import (
-	"bytes"
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"errors"
 	"time"
@@ -82,7 +82,7 @@ func (s DB) ReplaceReport(ctx context.Context, ip string, proof requestauth.Repo
 	if err := tx.QueryRowContext(ctx, "SELECT public_key FROM client_report_keys WHERE ip=?", ip).Scan(&pin); err != nil {
 		return err
 	}
-	if !bytes.Equal(pin, proof.Key) {
+	if subtle.ConstantTimeCompare(pin, proof.Key) != 1 {
 		return ErrReportKey
 	}
 	// Parsing a large report or waiting for another writer can consume the
