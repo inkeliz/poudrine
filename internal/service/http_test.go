@@ -45,7 +45,7 @@ func TestDownloadWriteDeadline(t *testing.T) {
 	raw, peer := net.Pipe()
 	defer raw.Close()
 	defer peer.Close()
-	conn := downloadConn{raw, time.Second}
+	conn := downloadConn{Conn: raw, idle: time.Second, rateWindow: 30 * time.Second}
 	received := make(chan error, 1)
 	go func() {
 		var chunk [1]byte
@@ -65,5 +65,29 @@ func TestDownloadWriteDeadline(t *testing.T) {
 	conn.idle = 10 * time.Millisecond
 	if _, err := conn.Write([]byte("b")); !errors.Is(err, os.ErrDeadlineExceeded) {
 		t.Fatalf("write to stalled peer: %v", err)
+	}
+}
+
+func TestDownloadRateBudgetAndNextResponse(t *testing.T) {
+	raw, peer := net.Pipe()
+	defer raw.Close()
+	defer peer.Close()
+	conn := &downloadConn{Conn: raw, idle: time.Second, rateWindow: 10 * time.Millisecond}
+	conn.rateEnd = time.Now().Add(-time.Second)
+	conn.sent = 1
+	if _, err := conn.Write([]byte("slow")); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("slow response got %v", err)
+	}
+	// The next response gets a fresh budget, even after a long cache fill.
+	if err := conn.SetWriteDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { var b [1]byte; _, err := io.ReadFull(peer, b[:]); done <- err }()
+	if _, err := conn.Write([]byte("a")); err != nil {
+		t.Fatal("next response inherited old rate budget:", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }

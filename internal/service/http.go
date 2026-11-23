@@ -52,19 +52,52 @@ func (l downloadListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return downloadConn{conn, httpWriteTimeout}, nil
+	return &downloadConn{Conn: conn, idle: httpWriteTimeout, rateWindow: 30 * time.Second}, nil
 }
+
+// Each response must deliver 16 KiB/s over a 30-second budget once sending
+// starts. Idle time and cache-fill time between responses do not consume it.
+const minimumDownloadRate = 16 << 10
 
 type downloadConn struct {
 	net.Conn
-	idle time.Duration
+	idle       time.Duration
+	mu         sync.Mutex
+	rateWindow time.Duration
+	rateEnd    time.Time
+	sent       int64
 }
 
-func (c downloadConn) Write(p []byte) (int, error) {
-	if err := c.SetWriteDeadline(time.Now().Add(c.idle)); err != nil {
+func (c *downloadConn) SetWriteDeadline(deadline time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// net/http sets this at request start and clears it after the response.
+	c.rateEnd, c.sent = time.Time{}, 0
+	return c.Conn.SetWriteDeadline(deadline)
+}
+
+func (c *downloadConn) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	deadline := now.Add(c.idle)
+	if c.rateWindow > 0 {
+		if c.rateEnd.IsZero() {
+			c.rateEnd = now.Add(c.rateWindow)
+		}
+		if c.rateEnd.Before(deadline) {
+			deadline = c.rateEnd
+		}
+	}
+	if err := c.Conn.SetWriteDeadline(deadline); err != nil {
 		return 0, err
 	}
-	return c.Conn.Write(p)
+	n, err := c.Conn.Write(p)
+	c.sent += int64(n)
+	if c.rateWindow > 0 && c.sent >= max(1, int64(float64(minimumDownloadRate)*c.rateWindow.Seconds())) {
+		c.rateEnd, c.sent = time.Now().Add(c.rateWindow), 0
+	}
+	return n, err
 }
 
 func signalReady(w io.WriteCloser) error {
@@ -98,7 +131,7 @@ func serveHTTP(ctx context.Context, o config.Options, repoListener, webListener 
 	webServer.BaseContext = func(net.Listener) context.Context { return runCtx }
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
-	wg.Go(func() { results <- repoServer.Serve(downloadListener{repoListener}) })
+	wg.Go(func() { results <- repoServer.Serve(downloadListener{limitRepositoryPeers(repoListener)}) })
 	wg.Go(func() {
 		if o.WebTLS {
 			results <- webServer.ServeTLS(webListener, "", "")
