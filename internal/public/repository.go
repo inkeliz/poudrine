@@ -49,11 +49,6 @@ func parseReport(body io.Reader, catalog *catalogpkg.Snapshot, printer *message.
 	scanner.Buffer(make([]byte, 1024), 1024)
 	line := 0
 	for scanner.Scan() {
-		// A reader error can leave a partial final line. Propagate the
-		// request size limit before interpreting that fragment as a record.
-		if err := scanner.Err(); err != nil {
-			return nil, result, err
-		}
 		line++
 		if line > maxReportLines {
 			return nil, result, errReportRows
