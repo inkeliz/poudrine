@@ -130,7 +130,7 @@ func TestPushQueueReplayAndRetry(t *testing.T) {
 	}
 	// Restart and replay the same retained logs. Re-registering an existing
 	// endpoint keeps its original enrollment time and pending delivery.
-	restarted, err := New(a.cfg)
+	restarted, err := New(t.Context(), a.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestUpgradePushSubscriptions(t *testing.T) {
 	}
 	cfg := Config{DB: &database.DB{DB: db}, RepositoryURL: "http://repo.test:8080", DataDir: t.TempDir()}
 	before := time.Now().Add(-time.Second)
-	if _, err := New(cfg); err != nil {
+	if _, err := New(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	var lang string
@@ -193,7 +193,7 @@ func TestUpgradePushSubscriptions(t *testing.T) {
 	if err := cfg.DB.SubscribePush(t.Context(), "https://push.invalid/old", "auth", "device", "pt-BR"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(cfg); err != nil {
+	if _, err := New(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow("SELECT since_ns FROM push_build_watch").Scan(&since); err != nil || since != 123 {

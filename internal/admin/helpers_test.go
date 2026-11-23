@@ -38,7 +38,7 @@ func testAdmin(t *testing.T) *Admin {
 	tracked := func(context.Context) ([]database.TrackedPackageRecord, error) {
 		return []database.TrackedPackageRecord{{Name: "private-client.example"}}, nil
 	}
-	a, err := New(Config{DB: &database.DB{DB: db}, DataDir: dir, RepositoryURL: "https://repo.example", PublicKey: func() string { return testutil.RepositoryPublicKey }, Stats: func() catalog.CatalogStats { return catalog.CatalogStats{Packages: 12, Ahead: 2} }, Clients: clients, Tracked: tracked, Build: func() (builder.BuildStatus, error) { return builder.BuildStatus{Stage: "waiting"}, nil }})
+	a, err := New(t.Context(), Config{DB: &database.DB{DB: db}, DataDir: dir, RepositoryURL: "https://repo.example", PublicKey: func() string { return testutil.RepositoryPublicKey }, Stats: func() catalog.CatalogStats { return catalog.CatalogStats{Packages: 12, Ahead: 2} }, Clients: clients, Tracked: tracked, Build: func() (builder.BuildStatus, error) { return builder.BuildStatus{Stage: "waiting"}, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func supervisedTestAdmin(t *testing.T, cfg Config, key ed25519.PrivateKey, b *bu
 	})
 	cfg.Broker = broker.NewClient(child)
 	cfg.PinnedKey = key.Public().(ed25519.PublicKey)
-	admin, err := New(cfg)
+	admin, err := New(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

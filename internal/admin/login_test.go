@@ -40,7 +40,7 @@ func TestSetupStatusAndKeyOnlyLogin(t *testing.T) {
 		t.Fatal("enrollment status did not reflect enrolled administrator")
 	}
 	checkPage(admin, true)
-	restarted, err := New(admin.cfg)
+	restarted, err := New(t.Context(), admin.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,7 +22,7 @@ func TestSignedClientSummaryAndPackages(t *testing.T) {
 	defer db.Close()
 	cfg := testAdmin(t).cfg
 	cfg.DB, cfg.DataDir = db, dir
-	a, err := New(cfg)
+	a, err := New(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

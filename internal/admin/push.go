@@ -40,7 +40,7 @@ func defaultPushContact(repositoryURL string) (string, error) {
 	return "postmaster@" + host, nil
 }
 
-func (a *Admin) initPush() error {
+func (a *Admin) initPush(ctx context.Context) error {
 	a.pushClient = &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	a.pushContact = strings.TrimPrefix(a.cfg.PushContact, "mailto:")
 	if a.pushContact == "" {
@@ -52,7 +52,7 @@ func (a *Admin) initPush() error {
 	}
 	load := func() error {
 		var err error
-		a.pushPrivate, a.pushPublic, err = a.cfg.DB.PushKeys()
+		a.pushPrivate, a.pushPublic, err = a.cfg.DB.PushKeys(ctx)
 		return err
 	}
 	if err := load(); !errors.Is(err, database.ErrNotFound) {
@@ -62,7 +62,7 @@ func (a *Admin) initPush() error {
 	if err != nil {
 		return err
 	}
-	if err = a.cfg.DB.SavePushKeys(priv, pub); err != nil {
+	if err = a.cfg.DB.SavePushKeys(ctx, priv, pub); err != nil {
 		return err
 	}
 	return load()

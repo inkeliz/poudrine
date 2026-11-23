@@ -57,24 +57,24 @@ type Admin struct {
 	pushClient                           *http.Client
 }
 
-func New(cfg Config) (*Admin, error) {
-	if err := cfg.DB.PrepareAdmin(); err != nil {
+func New(ctx context.Context, cfg Config) (*Admin, error) {
+	if err := cfg.DB.PrepareAdmin(ctx); err != nil {
 		return nil, err
 	}
 	a := &Admin{cfg: cfg}
-	if err := a.initPush(); err != nil {
+	if err := a.initPush(ctx); err != nil {
 		return nil, err
 	}
 	if len(cfg.PinnedKey) > 0 {
 		if len(cfg.PinnedKey) != ed25519.PublicKeySize {
 			return nil, errors.New("invalid supervisor admin identity")
 		}
-		err := cfg.DB.PinAdmin(cfg.PinnedKey)
+		err := cfg.DB.PinAdmin(ctx, cfg.PinnedKey)
 		if err != nil {
 			return nil, err
 		}
 	}
-	enrolled, err := cfg.DB.AdminEnrolled()
+	enrolled, err := cfg.DB.AdminEnrolled(ctx)
 	if err != nil {
 		return nil, err
 	}

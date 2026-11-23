@@ -48,7 +48,7 @@ func TestAdminEnrollmentAndSignedRequests(t *testing.T) {
 	if !strings.Contains(adminResponse(t, a, r, 200).Body.String(), "private-client.example") {
 		t.Fatal("client missing")
 	}
-	restarted, err := New(a.cfg)
+	restarted, err := New(t.Context(), a.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

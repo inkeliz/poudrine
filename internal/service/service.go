@@ -129,7 +129,7 @@ func serve(ctx context.Context, o config.Options) error {
 		view.CacheLimit = cache.Limit
 		return view, catalog.LoadBuildTimes(ctx, store, snapshot, view.Packages)
 	}
-	api, err := admin.New(admin.Config{ConfigPath: o.ConfigPath, ActiveSettings: o.ConfigSettings, Builder: o.Builder, Broker: broker, PinnedKey: pinned, DB: db, DataDir: o.State, RepositoryURL: o.PublicURL, WebsiteURL: o.WebsiteURL,
+	api, err := admin.New(ctx, admin.Config{ConfigPath: o.ConfigPath, ActiveSettings: o.ConfigSettings, Builder: o.Builder, Broker: broker, PinnedKey: pinned, DB: db, DataDir: o.State, RepositoryURL: o.PublicURL, WebsiteURL: o.WebsiteURL,
 		RepositoryPort: repoListener.Addr().(*net.TCPAddr).Port, UpstreamURL: o.Upstream,
 		PushContact: o.PushContact, PublicKey: func() string { return string(cat.PublicKey) }, Stats: cat.Stats, Clients: store.Clients, Tracked: store.Tracked, Packages: packages, Build: func() (builder.BuildStatus, error) {
 			s, err := builder.ReadBuildStatus(o.Builder.StatusFile)

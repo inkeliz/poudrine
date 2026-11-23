@@ -4,13 +4,13 @@ import (
 	"context"
 )
 
-func (s DB) PushKeys() (private, public string, err error) {
-	err = s.DB.QueryRow("SELECT private_key,public_key FROM push_identity WHERE id=1").Scan(&private, &public)
+func (s DB) PushKeys(ctx context.Context) (private, public string, err error) {
+	err = s.DB.QueryRowContext(ctx, "SELECT private_key,public_key FROM push_identity WHERE id=1").Scan(&private, &public)
 	return
 }
 
-func (s DB) SavePushKeys(private, public string) error {
-	_, err := s.DB.Exec("INSERT INTO push_identity(id,private_key,public_key) VALUES(1,?,?) ON CONFLICT DO NOTHING", private, public)
+func (s DB) SavePushKeys(ctx context.Context, private, public string) error {
+	_, err := s.DB.ExecContext(ctx, "INSERT INTO push_identity(id,private_key,public_key) VALUES(1,?,?) ON CONFLICT DO NOTHING", private, public)
 	return err
 }
 

@@ -19,7 +19,7 @@ import (
 func TestAutomaticPushContactIP(t *testing.T) {
 	admin := testAdmin(t)
 	admin.cfg.RepositoryURL = "http://[::1]:8080"
-	if err := admin.initPush(); err != nil {
+	if err := admin.initPush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if admin.pushContact != "postmaster@%5BIPv6:::1%5D" {

@@ -26,35 +26,35 @@ CREATE TABLE IF NOT EXISTS admin_nonces (
 CREATE INDEX IF NOT EXISTS admin_nonce_expiry ON admin_nonces(expires);
 `
 
-func (s DB) PrepareAdmin() error {
-	tx, err := s.DB.Begin()
+func (s DB) PrepareAdmin(ctx context.Context) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(BuildHistorySchema + adminSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, BuildHistorySchema+adminSchema); err != nil {
 		return err
 	}
 	var hasLanguage bool
-	if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM pragma_table_info('push_subscriptions') WHERE name='language')").Scan(&hasLanguage); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pragma_table_info('push_subscriptions') WHERE name='language')").Scan(&hasLanguage); err != nil {
 		return err
 	}
 	if !hasLanguage {
-		if _, err := tx.Exec("ALTER TABLE push_subscriptions ADD COLUMN language TEXT NOT NULL DEFAULT 'en'"); err != nil {
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE push_subscriptions ADD COLUMN language TEXT NOT NULL DEFAULT 'en'"); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
-func (s DB) PinAdmin(key ed25519.PublicKey) error {
-	_, err := s.DB.Exec("INSERT INTO admin_identity(id,public_key) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET public_key=excluded.public_key", []byte(key))
+func (s DB) PinAdmin(ctx context.Context, key ed25519.PublicKey) error {
+	_, err := s.DB.ExecContext(ctx, "INSERT INTO admin_identity(id,public_key) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET public_key=excluded.public_key", []byte(key))
 	return err
 }
 
-func (s DB) AdminEnrolled() (bool, error) {
+func (s DB) AdminEnrolled(ctx context.Context) (bool, error) {
 	var enrolled bool
-	err := s.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM admin_identity)").Scan(&enrolled)
+	err := s.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM admin_identity)").Scan(&enrolled)
 	return enrolled, err
 }
 
@@ -92,10 +92,10 @@ func (s DB) ConsumeAdminNonce(ctx context.Context, nonce []byte, stamp int64) (b
 		return false, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec("DELETE FROM admin_nonces WHERE expires < ?", time.Now().Unix()); err != nil {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM admin_nonces WHERE expires < ?", time.Now().Unix()); err != nil {
 		return false, err
 	}
-	res, err := tx.Exec("INSERT INTO admin_nonces(nonce,expires) VALUES(?,?) ON CONFLICT DO NOTHING", nonce, stamp+requestauth.ClockSkewSeconds)
+	res, err := tx.ExecContext(ctx, "INSERT INTO admin_nonces(nonce,expires) VALUES(?,?) ON CONFLICT DO NOTHING", nonce, stamp+requestauth.ClockSkewSeconds)
 	if err != nil {
 		return false, err
 	}
