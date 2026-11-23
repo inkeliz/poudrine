@@ -50,3 +50,18 @@ func (s *Repository) recordActivity(ip string, p *packageinfo.Package) {
 	default:
 	}
 }
+
+func (s *Repository) CleanupClientActivity(ctx context.Context) {
+	tick := time.NewTicker(time.Hour)
+	defer tick.Stop()
+	for ctx.Err() == nil {
+		if err := s.Store.CleanupClientActivity(ctx, time.Now()); err != nil && ctx.Err() == nil {
+			log.Printf("clean up client activity: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}

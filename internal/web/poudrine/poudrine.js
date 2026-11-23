@@ -1252,7 +1252,7 @@ function createInventoryView(request, el, node) {
     "client-packages": {columns: 3, label: "Packages", renderRow: detailRow, matches: detailMatches}
   };
   let filter = "all", sortKey = "origin", ascending = true;
-  let openIP, inflight, detailRequest = 0;
+  let openIP, inflight, detailRequest = 0, clientRequest = 0, clientSearchTimer;
 
   function megabytes(bytes) {
     if (!Number.isFinite(bytes)) return "—";
@@ -1384,16 +1384,17 @@ function createInventoryView(request, el, node) {
       else if (filter === "stored") records = records.filter(p => p.compiled || p.history_only || p.cached);
       else records = records.filter(p => p[filter]);
     }
-    if (term) records = records.filter(item => view.matches(item, term));
+    const remote = id === "clients";
+    if (term && !remote) records = records.filter(item => view.matches(item, term));
     const pages = Math.ceil(records.length / pageSize);
-    view.page = Math.min(view.page, Math.max(0, pages - 1));
-    const start = view.page * pageSize;
-    const summary = !view.records ? "Unavailable" : view.label + " (" + display.number(records.length) + ")";
+    if (!remote) view.page = Math.min(view.page, Math.max(0, pages - 1));
+    const start = remote ? 0 : view.page * pageSize;
+    const summary = !view.records ? "Unavailable" : remote ? view.label : view.label + " (" + display.number(records.length) + ")";
     el(id + "-count").textContent = summary;
-    el(id + "-pages").hidden = pages < 2;
-    el(id + "-page").textContent = "Page " + display.number(view.page + 1) + " of " + display.number(pages);
-    el(id + "-previous").disabled = view.page === 0;
-    el(id + "-next").disabled = view.page + 1 >= pages;
+    el(id + "-pages").hidden = remote ? view.page === 0 && !view.more : pages < 2;
+    el(id + "-page").textContent = "Page " + display.number(view.page + 1) + (remote ? "" : " of " + display.number(pages));
+    el(id + "-previous").disabled = view.loading || view.page === 0;
+    el(id + "-next").disabled = view.loading || (remote ? !view.more : view.page + 1 >= pages);
 
     const body = document.createDocumentFragment();
     for (const item of records.slice(start, start + pageSize)) {
@@ -1477,22 +1478,47 @@ function createInventoryView(request, el, node) {
     render("packages");
   }
 
-  function showClients(records) {
+  async function loadClients() {
+    const version = ++clientRequest;
     const view = views.clients;
-    view.error = records ? "" : "Could not load repository clients.";
-    if (records) {
-      view.records = records.sort((a, b) => b.last_seen - a.last_seen || display.collate.compare(a.ip, b.ip));
-      view.empty = "Clients appear after a repository request or an installed-package report.";
-    }
-    el("clients-note").textContent = !records && view.records ? "Could not refresh clients. Showing the last result." : "";
+    const page = view.page;
+    view.loading = true;
     render("clients");
+    try {
+      const data = await request("/api/admin/clients/summary", "QUERY", {
+        offset: page * pageSize, search: el("clients-search").value.trim()
+      });
+      if (version !== clientRequest) return;
+      view.records = data.clients;
+      view.more = data.more;
+      view.error = "";
+      view.empty = "Clients appear after a repository request or an installed-package report.";
+      el("clients-note").textContent = "";
+    } catch {
+      if (version !== clientRequest) return;
+      view.records = undefined;
+      view.more = false;
+      view.error = "Could not load repository clients.";
+      el("clients-note").textContent = view.error;
+    } finally {
+      if (version === clientRequest) { view.loading = false; render("clients"); }
+    }
   }
 
   for (const [id, view] of Object.entries(views)) {
     view.page = 0;
-    el(id + "-search").oninput = () => { view.page = 0; render(id); };
-    el(id + "-previous").onclick = () => { view.page--; render(id); };
-    el(id + "-next").onclick = () => { view.page++; render(id); };
+    el(id + "-search").oninput = () => {
+      view.page = 0;
+      if (id === "clients") {
+        ++clientRequest;
+        view.loading = true;
+        render(id);
+        clearTimeout(clientSearchTimer);
+        clientSearchTimer = setTimeout(loadClients, 250);
+      } else render(id);
+    };
+    el(id + "-previous").onclick = () => { view.page--; id === "clients" ? loadClients() : render(id); };
+    el(id + "-next").onclick = () => { view.page++; id === "clients" ? loadClients() : render(id); };
   }
   for (const button of el("package-filter").querySelectorAll("button")) {
     button.onclick = () => {
@@ -1528,7 +1554,7 @@ function createInventoryView(request, el, node) {
     refresh() {
       if (!inflight) inflight = Promise.all([
         request("/api/admin/packages").then(showPackages, () => showPackages(null)),
-        request("/api/admin/clients/summary").then(showClients, () => showClients(null))
+        loadClients()
       ]).finally(() => { inflight = undefined; });
       return inflight;
     },

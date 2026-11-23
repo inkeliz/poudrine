@@ -22,6 +22,7 @@ func TestSignedClientSummaryAndPackages(t *testing.T) {
 	defer db.Close()
 	cfg := testAdmin(t).cfg
 	cfg.DB, cfg.DataDir = db, dir
+	cfg.Clients = db.Clients
 	a, err := New(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +49,8 @@ func TestSignedClientSummaryAndPackages(t *testing.T) {
 	if err := store.ReplaceReport(t.Context(), ip, testutil.ReportProof(), map[string]database.InstalledPackage{"private-app": {Origin: "local/app", Version: "3"}}); err != nil {
 		t.Fatal(err)
 	}
+	query(routes.ClientSummary.Path, `{"offset":-1}`, 400)
+	query(routes.Clients.Path, `{"offset":-1}`, 400)
 	summary := query(routes.ClientSummary.Path, "{}", 200)
 	if !strings.Contains(summary, `"package_count":1`) || strings.Contains(summary, "private-app") {
 		t.Fatalf("unexpected client summary: %s", summary)

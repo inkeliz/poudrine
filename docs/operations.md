@@ -149,10 +149,14 @@ poudrine-v2\n<METHOD>\n<PATH>\n<UNIX_SECONDS>\n<NONCE>\n
 | `QUERY /api/admin/build/issues` | `{}` for the latest run with issues, or `{"started":"2026-11-21T02:00:00.123456789Z"}` |
 | `QUERY /api/admin/build/log` | `{"started":"2026-11-21T02:00:00.123456789Z","package":"abseil-20250127.1_3"}` |
 | `POST /api/admin/build/retry` | `{"started":"2026-11-21T02:00:00.123456789Z","package":"abseil-20250127.1_3"}` |
+| `QUERY /api/admin/clients/summary` | `{"offset":0,"search":"2001:db8:"}`; both fields are optional |
+| `QUERY /api/admin/clients` | `{"offset":0,"search":"2001:db8:"}`; both fields are optional |
 | `QUERY /api/admin/clients/packages` | `{"ip":"2001:db8::10"}` |
 | `POST /api/admin/build/force` | `{}` |
 
 Login returns HTTP 204. Each `build` event contains the full snapshot, starting with the current state when you connect. Sign each reconnection with a fresh nonce. History accepts `hour`, `day`, `week` and `month`. Forcing a build returns HTTP 202 on acceptance and includes `already_queued` in the response. The client report command on the website signs the exact text it posts to the repository’s `/api/inventory` with that client’s own key.
+
+Client lists include up to 25 clients per page, ordered by last activity and then IP. The summary response is `{"clients":[...],"more":true}`; add 25 to `offset` while `more` is true. The full client endpoint returns an array with each client's requested and reported packages. `search` filters IP addresses across all retained clients before pagination. Client activity is retained for 180 days; pinned report keys and tracked build targets persist after activity cleanup.
 
 In a build snapshot, each running job can include `progress_percent` from its build tool, `active_elapsed_seconds` from the worker, and `last_build_seconds` from build history. Subtract active elapsed seconds from the previous duration to estimate the remaining build time. A negative value gives the time past the estimate.
 

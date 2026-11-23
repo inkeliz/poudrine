@@ -56,7 +56,8 @@ const packageRequestsSchema = `CREATE TABLE IF NOT EXISTS package_requests (
  ip TEXT NOT NULL REFERENCES clients(ip), name TEXT NOT NULL REFERENCES tracked_packages(name),
  version TEXT NOT NULL, last_seen INTEGER NOT NULL, PRIMARY KEY(ip,name)
 );
-CREATE INDEX IF NOT EXISTS package_requests_name ON package_requests(name);`
+CREATE INDEX IF NOT EXISTS package_requests_name ON package_requests(name);
+CREATE INDEX IF NOT EXISTS package_requests_age ON package_requests(last_seen);`
 
 func validClientIP(ip string) bool {
 	if len(ip) > 64 {

@@ -45,7 +45,7 @@ type Config struct {
 	PushContact               string
 	PublicKey                 func() string
 	Stats                     func() catalog.CatalogStats
-	Clients                   func(context.Context) ([]database.ClientRecord, error)
+	Clients                   func(context.Context, ...database.ClientPageQuery) ([]database.ClientRecord, error)
 	Tracked                   func(context.Context) ([]database.TrackedPackageRecord, error)
 	Packages                  func(context.Context, []string) (catalog.PackageInventoryView, error)
 	Build                     func() (builderpkg.BuildStatus, error)
@@ -151,7 +151,7 @@ func (a *Admin) Handler() http.Handler {
 	mux.HandleFunc(routes.BuildEvents.Pattern(), a.signedAs(a.buildEvents))
 	mux.HandleFunc(routes.Origins.Pattern(), a.signedEmptyQuery(a.buildOrigins))
 	mux.HandleFunc(routes.Packages.Pattern(), a.signedEmptyQuery(a.packageInventory))
-	mux.HandleFunc(routes.ClientSummary.Pattern(), a.signedEmptyQuery(a.clientSummaries))
+	mux.HandleFunc(routes.ClientSummary.Pattern(), a.signed(queryJSON(a.clientSummaries, writeDBQueryError)))
 	mux.HandleFunc(routes.ClientPackages.Pattern(), a.signed(queryJSON(a.clientPackages, writeDBQueryError)))
 	mux.HandleFunc(routes.BuildIssues.Pattern(), a.signed(queryJSON(a.buildIssues, writeDiagnosticError)))
 	mux.HandleFunc(routes.BuildResults.Pattern(), a.signed(queryJSON(a.buildResults, writeDiagnosticError)))
@@ -160,7 +160,7 @@ func (a *Admin) Handler() http.Handler {
 	mux.HandleFunc(routes.ForceBuild.Pattern(), a.signed(a.queueBuild))
 	mux.HandleFunc(routes.BuildHistory.Pattern(), a.signed(queryJSON(a.buildHistory, writeDBQueryError)))
 	mux.HandleFunc(routes.HistoryPackages.Pattern(), a.signed(queryJSON(a.cfg.DB.BuildHistoryPackages, writeDBQueryError)))
-	mux.HandleFunc(routes.Clients.Pattern(), a.signedEmptyQuery(listView(a.cfg.Clients)))
+	mux.HandleFunc(routes.Clients.Pattern(), a.signed(queryJSON(a.clientRecords, writeDBQueryError)))
 	mux.HandleFunc(routes.Tracked.Pattern(), a.signedEmptyQuery(listView(a.cfg.Tracked)))
 	mux.HandleFunc(routes.PushKey.Pattern(), a.signedEmptyQuery(func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		adminJSON(w, map[string]string{"public_key": a.pushPublic})

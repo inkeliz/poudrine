@@ -17,12 +17,13 @@ const reportSchema = `
 CREATE TABLE IF NOT EXISTS client_reports (
  ip TEXT PRIMARY KEY REFERENCES clients(ip), reported_at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS client_reports_age ON client_reports(reported_at);
 CREATE TABLE IF NOT EXISTS client_report_packages (
  ip TEXT NOT NULL REFERENCES client_reports(ip), name TEXT NOT NULL, version TEXT NOT NULL,
  origin TEXT NOT NULL, build_origin TEXT NOT NULL, PRIMARY KEY(ip,name)
 );
 CREATE TABLE IF NOT EXISTS client_report_keys (
- ip TEXT PRIMARY KEY REFERENCES clients(ip), public_key BLOB NOT NULL CHECK(length(public_key)=32)
+ ip TEXT PRIMARY KEY, public_key BLOB NOT NULL CHECK(length(public_key)=32)
 );
 CREATE TABLE IF NOT EXISTS client_report_nonces (
  nonce BLOB PRIMARY KEY, expires INTEGER NOT NULL
@@ -143,4 +144,23 @@ func (s DB) ReplaceReport(ctx context.Context, ip string, proof requestauth.Repo
 		return err
 	}
 	return tx.Commit()
+}
+
+// Identity pins outlive activity retention. Removing old inventory must never
+// permit a different key to claim an address that was already enrolled.
+func upgradeReportKeyRetention(ctx context.Context, conn *sql.Conn) error {
+	var linked bool
+	if err := conn.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pragma_foreign_key_list('client_report_keys'))").Scan(&linked); err != nil {
+		return err
+	}
+	if !linked {
+		return nil
+	}
+	_, err := conn.ExecContext(ctx, `CREATE TABLE retained_report_keys (
+ ip TEXT PRIMARY KEY, public_key BLOB NOT NULL CHECK(length(public_key)=32)
+ );
+ INSERT INTO retained_report_keys SELECT ip,public_key FROM client_report_keys;
+ DROP TABLE client_report_keys;
+ ALTER TABLE retained_report_keys RENAME TO client_report_keys;`)
+	return err
 }

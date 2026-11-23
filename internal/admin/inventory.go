@@ -8,13 +8,12 @@ import (
 	"github.com/inkeliz/poudrine/internal/database"
 )
 
-func (a *Admin) clientSummaries(w http.ResponseWriter, r *http.Request, _ []byte) {
-	clients, err := a.cfg.DB.ClientSummaries(r.Context())
-	if err != nil {
-		adminInternal(w, err)
-		return
-	}
-	adminJSON(w, clients)
+func (a *Admin) clientSummaries(ctx context.Context, q database.ClientPageQuery) (database.ClientSummaryPage, error) {
+	return a.cfg.DB.ClientSummaryPage(ctx, q)
+}
+
+func (a *Admin) clientRecords(ctx context.Context, q database.ClientPageQuery) ([]database.ClientRecord, error) {
+	return a.cfg.Clients(ctx, q)
 }
 
 type clientQuery struct {

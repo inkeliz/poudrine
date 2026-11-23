@@ -66,6 +66,9 @@ func initializeSchema(db *sql.DB) error {
 	if err := upgradeReportActivity(ctx, conn); err != nil {
 		return err
 	}
+	if err := upgradeReportKeyRetention(ctx, conn); err != nil {
+		return err
+	}
 	_, err = conn.ExecContext(ctx, "COMMIT")
 	return err
 }

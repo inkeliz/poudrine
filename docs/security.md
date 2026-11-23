@@ -15,4 +15,6 @@ Upstream HTTP redirects stay on the configured mirror hostname and port, except 
 
 Inventory uploads are limited to four concurrent reports, with at most one from each observed client address. The limit covers body reads, signature verification, parsing and database writes. Excess reports receive HTTP 429 and can retry after ten seconds. Each report remains limited to 8 MiB; these bounds do not replace network access controls.
 
+Client activity expires after 180 days. An hourly cleanup removes old requests, installed-package reports and inactive client entries. Pinned report keys remain after activity expires: a returning client must still use its original key. Cleanup also preserves tracked build targets. The dashboard loads clients in pages of 25 and searches across retained clients.
+
 Repository connections are limited to eight per TCP peer, with a 30-minute connection lifetime. A reverse proxy shares that peer limit across its clients. Once a response starts sending, it must deliver at least 16 KiB/s within successive 30-second budgets; idle writes also time out after 30 seconds. Fetching and verifying an uncached archive happens before the response transfer budget starts.

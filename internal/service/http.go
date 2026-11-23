@@ -143,6 +143,7 @@ func serveHTTP(ctx context.Context, o config.Options, repoListener, webListener 
 	wg.Go(func() { catalog.MonitorLivePackages(runCtx, o, repo.Catalog) })
 	wg.Go(func() { api.DispatchBuildPush(runCtx, repo.Catalog) })
 	wg.Go(func() { api.CleanupNonces(runCtx) })
+	wg.Go(func() { repo.CleanupClientActivity(runCtx) })
 	defer func() {
 		cancel()
 		// Release both ports before waiting for active downloads to finish.

@@ -32,7 +32,7 @@ func testAdmin(t *testing.T) *Admin {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	clients := func(context.Context) ([]database.ClientRecord, error) {
+	clients := func(context.Context, ...database.ClientPageQuery) ([]database.ClientRecord, error) {
 		return []database.ClientRecord{{IP: "private-client.example"}}, nil
 	}
 	tracked := func(context.Context) ([]database.TrackedPackageRecord, error) {
