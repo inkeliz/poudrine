@@ -14,7 +14,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -32,10 +31,6 @@ const (
 	maxReportBytes = 8 << 20
 	maxReportLines = 65536
 )
-
-var reportToken = regexp.MustCompile(`^[-A-Za-z0-9_+.,:~]+$`)
-
-var reportOrigin = regexp.MustCompile(`^[-A-Za-z0-9_+./:@~]+$`)
 
 var errReportRows = errors.New("too many inventory entries")
 
@@ -68,8 +63,7 @@ func parseReport(body io.Reader, catalog *catalogpkg.Snapshot, printer *message.
 			return nil, result, errors.New(printer.Sprintf("line %d: expected package name, installed version and origin", line))
 		}
 		name, version, origin := fields[0], fields[1], fields[2]
-		if len(name) > 255 || len(version) > 255 || len(origin) > 255 ||
-			!reportToken.MatchString(name) || !reportToken.MatchString(version) || !reportOrigin.MatchString(origin) {
+		if !packageinfo.ValidInventoryPackage(name, version, origin) {
 			return nil, result, errors.New(printer.Sprintf("line %d: invalid package name, version or origin", line))
 		}
 		if old, ok := packages[name]; ok {

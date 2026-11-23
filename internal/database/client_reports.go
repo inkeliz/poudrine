@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/inkeliz/poudrine/internal/packageinfo"
 	"github.com/inkeliz/poudrine/internal/requestauth"
 )
 
@@ -64,6 +65,14 @@ type InstalledPackage struct {
 }
 
 func (s DB) ReplaceReport(ctx context.Context, ip string, proof requestauth.ReportProof, packages map[string]InstalledPackage) error {
+	if !validClientIP(ip) {
+		return errors.New("invalid client address")
+	}
+	for name, p := range packages {
+		if !packageinfo.ValidInventoryPackage(name, p.Version, p.Origin) || len(p.BuildOrigin) > 255 || (p.BuildOrigin != "" && !packageinfo.BuildOrigin.MatchString(p.BuildOrigin)) {
+			return errors.New("invalid installed package")
+		}
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err

@@ -6,10 +6,13 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/inkeliz/poudrine/internal/packageinfo"
 	"github.com/inkeliz/poudrine/internal/requestauth"
+	"github.com/inkeliz/poudrine/internal/testutil"
 )
 
 func TestAdminNonceCleanupIsIndependent(t *testing.T) {
@@ -130,6 +133,61 @@ func TestOpenRollsBackPartialSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
+}
+
+func TestInventoryValidationBeforeWrites(t *testing.T) {
+	db, err := Open(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	good := packageinfo.Package{Name: "curl", Version: "8.1_2,1", Origin: "ftp/curl", BuildOrigin: "ftp/curl@default"}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*packageinfo.Package)
+	}{
+		{"empty name", func(p *packageinfo.Package) { p.Name = "" }},
+		{"long name", func(p *packageinfo.Package) { p.Name = strings.Repeat("a", 256) }},
+		{"name newline", func(p *packageinfo.Package) { p.Name = "bad\nname" }},
+		{"empty version", func(p *packageinfo.Package) { p.Version = "" }},
+		{"long version", func(p *packageinfo.Package) { p.Version = strings.Repeat("1", 256) }},
+		{"version slash", func(p *packageinfo.Package) { p.Version = "1/2" }},
+		{"empty origin", func(p *packageinfo.Package) { p.Origin = "" }},
+		{"long origin", func(p *packageinfo.Package) { p.Origin = "ftp/" + strings.Repeat("a", 256) }},
+		{"origin newline", func(p *packageinfo.Package) { p.Origin = "ftp/curl\n" }},
+		{"build injection", func(p *packageinfo.Package) { p.BuildOrigin = "ftp/curl\ndevel/other" }},
+		{"long build origin", func(p *packageinfo.Package) { p.BuildOrigin = "ftp/" + strings.Repeat("a", 256) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := good
+			tc.mutate(&p)
+			if err := db.Record(t.Context(), "::1", &p); err == nil {
+				t.Fatal("invalid request accepted")
+			}
+			installed := InstalledPackage{Version: p.Version, Origin: p.Origin, BuildOrigin: p.BuildOrigin}
+			if err := db.ReplaceReport(t.Context(), "::1", testutil.ReportProof(), map[string]InstalledPackage{p.Name: installed}); err == nil {
+				t.Fatal("invalid report accepted")
+			}
+		})
+	}
+	for _, ip := range []string{"", strings.Repeat("1", 65), "not-an-ip"} {
+		if err := db.Record(t.Context(), ip, nil); err == nil {
+			t.Fatalf("accepted address %q", ip)
+		}
+		if err := db.ReplaceReport(t.Context(), ip, testutil.ReportProof(), nil); err == nil {
+			t.Fatalf("accepted report address %q", ip)
+		}
+	}
+	clients, err := db.Clients(t.Context())
+	if err != nil || len(clients) != 0 {
+		t.Fatalf("invalid input wrote clients: %v, %v", clients, err)
+	}
+	if err := db.Record(t.Context(), "2001:db8::1", &good); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ReplaceReport(t.Context(), "2001:db8::1", testutil.ReportProof(), map[string]InstalledPackage{good.Name: {Version: good.Version, Origin: good.Origin}}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestAdminWriteCancellationDuringSQLiteLock(t *testing.T) {

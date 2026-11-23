@@ -78,3 +78,11 @@ func SplitNameVersion(pkg string) (name, version string) {
 	}
 	return pkg[:i], pkg[i+1:]
 }
+
+var inventoryToken = regexp.MustCompile(`^[-A-Za-z0-9_+.,:~]+$`)
+var inventoryOrigin = regexp.MustCompile(`^[-A-Za-z0-9_+./:@~]+$`)
+
+func ValidInventoryPackage(name, version, origin string) bool {
+	return len(name) <= 255 && len(version) <= 255 && len(origin) <= 255 &&
+		inventoryToken.MatchString(name) && inventoryToken.MatchString(version) && inventoryOrigin.MatchString(origin)
+}
