@@ -33,18 +33,7 @@ CREATE TABLE IF NOT EXISTS reported_targets (
 
 // Older databases only recorded whether a package had ever been reported.
 // Preserve the newest available report timestamp before a client replaces it.
-func upgradeReportActivity(db *sql.DB) error {
-	ctx := context.Background()
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	// Both the build worker and the repository can open the database for writing.
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
-	defer conn.ExecContext(ctx, "ROLLBACK")
+func upgradeReportActivity(ctx context.Context, conn *sql.Conn) error {
 	var exists bool
 	if err := conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('reported_targets') WHERE name='last_seen')`).Scan(&exists); err != nil {
 		return err
@@ -61,8 +50,7 @@ UPDATE reported_targets AS t SET last_seen=l.seen FROM latest AS l WHERE t.name=
 			return err
 		}
 	}
-	_, err = conn.ExecContext(ctx, "COMMIT")
-	return err
+	return nil
 }
 
 var ErrReportKey = errors.New("the report key does not match the key registered for this client address")

@@ -3,7 +3,9 @@ package database
 import (
 	"context"
 	"crypto/ed25519"
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -99,6 +101,35 @@ func TestAdminDatabaseCancellationWhileWaiting(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOpenRollsBackPartialSchema(t *testing.T) {
+	dir := t.TempDir()
+	raw, err := sql.Open("sqlite", filepath.Join(dir, "inventory.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	// Fail late in initialization, after the client tables have been created.
+	if _, err := raw.Exec("CREATE TABLE package_builds (broken INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	if db, err := Open(dir, false); err == nil {
+		db.Close()
+		t.Fatal("opened incompatible schema")
+	}
+	var exists bool
+	if err := raw.QueryRow("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='clients')").Scan(&exists); err != nil || exists {
+		t.Fatalf("partial schema persisted: %v, %v", exists, err)
+	}
+	if _, err := raw.Exec("DROP TABLE package_builds"); err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
 }
 
 func TestAdminWriteCancellationDuringSQLiteLock(t *testing.T) {
