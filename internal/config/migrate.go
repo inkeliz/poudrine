@@ -40,6 +40,8 @@ func MigrateConfiguration(path string, args []string) error {
 	for i := 0; i < fields.NumField(); i++ {
 		name := strings.ReplaceAll(fields.Type().Field(i).Tag.Get("json"), "_", "-")
 		switch field := fields.Field(i).Addr().Interface().(type) {
+		case *bool:
+			flags.BoolVar(field, name, *field, "")
 		case *string:
 			flags.StringVar(field, name, *field, "")
 		case *int:

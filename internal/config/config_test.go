@@ -96,12 +96,12 @@ func TestMigrateLegacySettings(t *testing.T) {
 	t.Setenv("POUDRINE_REPO_URL", "https://old.example")
 	t.Setenv("POUDRINE_WEB_URL", "https://site.example/ui/")
 	path := filepath.Join(t.TempDir(), "poudrine.json")
-	args := []string{"-state", "srv/previous", "-cache-gb", "0.5", "-jobs=3", "-repo-url", "https://custom.example", "-build-interval", "45m"}
+	args := []string{"-web-tls=false", "-state", "srv/previous", "-cache-gb", "0.5", "-jobs=3", "-repo-url", "https://custom.example", "-build-interval", "45m"}
 	if err := MigrateConfiguration(path, args); err != nil {
 		t.Fatal(err)
 	}
 	c, rev, err := LoadConfiguration(path)
-	if err != nil || c.State != "/srv/previous" || c.CacheGB != 0.5 || c.Jobs != 3 || c.RepoURL != "https://custom.example" || c.WebURL != "https://site.example/ui/" || c.BuildInterval != "45m" {
+	if err != nil || c.WebTLS || c.State != "/srv/previous" || c.CacheGB != 0.5 || c.Jobs != 3 || c.RepoURL != "https://custom.example" || c.WebURL != "https://site.example/ui/" || c.BuildInterval != "45m" {
 		t.Fatalf("bad migration: %+v %v", c, err)
 	}
 	if err := MigrateConfiguration(path, []string{"-state", "/different"}); err != nil {
