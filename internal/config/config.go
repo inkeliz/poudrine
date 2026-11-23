@@ -3,7 +3,6 @@ package config
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -20,6 +19,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"github.com/inkeliz/poudrine/internal/constanttime"
 	"github.com/inkeliz/poudrine/internal/fsutil"
 )
 
@@ -310,7 +310,7 @@ func validSurrogatePairs(raw []byte) bool {
 
 func ConfigRevision(data []byte) string {
 	h := sha256.Sum256(data)
-	return hex.EncodeToString(h[:])
+	return constanttime.EncodeHex(h[:])
 }
 
 // loadConfiguration is read-only, including when the file is missing.

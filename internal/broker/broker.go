@@ -7,7 +7,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -18,6 +17,7 @@ import (
 
 	builderpkg "github.com/inkeliz/poudrine/internal/builder"
 	"github.com/inkeliz/poudrine/internal/config"
+	"github.com/inkeliz/poudrine/internal/constanttime"
 	"github.com/inkeliz/poudrine/internal/fsutil"
 	"github.com/inkeliz/poudrine/internal/requestauth"
 	"github.com/inkeliz/poudrine/internal/routes"
@@ -254,7 +254,7 @@ func NewAuthority(configPath string, migrated ed25519.PublicKey) (*Authority, er
 	}
 	var secret [32]byte
 	rand.Read(secret[:])
-	return a, fsutil.CreateFileOnce(configPath+config.SetupTokenSuffix, []byte(base64.RawURLEncoding.EncodeToString(secret[:])+"\n"), 0600)
+	return a, fsutil.CreateFileOnce(configPath+config.SetupTokenSuffix, []byte(constanttime.RawURLEncoding.EncodeToString(secret[:])+"\n"), 0600)
 }
 
 func (a *Authority) PublicKey() (ed25519.PublicKey, error) {

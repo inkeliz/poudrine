@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -19,6 +18,7 @@ import (
 	"github.com/inkeliz/poudrine/internal/builder"
 	"github.com/inkeliz/poudrine/internal/catalog"
 	"github.com/inkeliz/poudrine/internal/config"
+	"github.com/inkeliz/poudrine/internal/constanttime"
 	"github.com/inkeliz/poudrine/internal/database"
 	"github.com/inkeliz/poudrine/internal/public"
 )
@@ -48,7 +48,7 @@ func serve(ctx context.Context, o config.Options) error {
 			publicStats = os.NewFile(6, config.PublicStatsFile)
 			defer publicStats.Close()
 		}
-		pinned, err = base64.RawURLEncoding.DecodeString(os.Getenv("POUDRINE_ADMIN_KEY"))
+		pinned, err = constanttime.RawURLEncoding.DecodeString(os.Getenv("POUDRINE_ADMIN_KEY"))
 		if err != nil {
 			return err
 		}

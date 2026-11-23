@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/inkeliz/poudrine/internal/builder"
 	"github.com/inkeliz/poudrine/internal/config"
+	"github.com/inkeliz/poudrine/internal/constanttime"
 	"github.com/inkeliz/poudrine/internal/packageinfo"
 	"golang.org/x/sys/unix"
 )
@@ -363,7 +363,7 @@ func (s *LiveArchiveStore) capture(ctx context.Context, source *os.File, before 
 	if n != before.Size() || !sameArchive(before, after) {
 		return LivePackage{}, errors.New("staged package changed while copying")
 	}
-	sum := hex.EncodeToString(h.Sum(nil))
+	sum := constanttime.EncodeHex(h.Sum(nil))
 	m, err := ReadLiveManifest(tmp, sum)
 	if err != nil {
 		return LivePackage{}, err

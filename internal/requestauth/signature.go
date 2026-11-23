@@ -3,10 +3,11 @@ package requestauth
 
 import (
 	"crypto/ed25519"
-	"encoding/base64"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/inkeliz/poudrine/internal/constanttime"
 )
 
 const Query = "QUERY"
@@ -21,10 +22,10 @@ type ReportProof struct {
 
 // PublicKey decodes the raw Ed25519 key carried by a self-signed request.
 func PublicKey(text string) ed25519.PublicKey {
-	if len(text) != base64.RawURLEncoding.EncodedLen(ed25519.PublicKeySize) {
+	if len(text) != constanttime.RawURLEncoding.EncodedLen(ed25519.PublicKeySize) {
 		return nil
 	}
-	key, err := base64.RawURLEncoding.Strict().DecodeString(text)
+	key, err := constanttime.RawURLEncoding.Strict().DecodeString(text)
 	if err != nil || len(key) != ed25519.PublicKeySize {
 		return nil
 	}
@@ -36,8 +37,8 @@ func PublicKey(text string) ed25519.PublicKey {
 // Callers enforce their own key trust and nonce replay policies.
 func Verify(key ed25519.PublicKey, method, path, timestamp, nonceText, signature string, body []byte) ([]byte, int64, bool) {
 	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "?#") ||
-		len(nonceText) != base64.RawURLEncoding.EncodedLen(16) ||
-		len(signature) != base64.RawURLEncoding.EncodedLen(ed25519.SignatureSize) {
+		len(nonceText) != constanttime.RawURLEncoding.EncodedLen(16) ||
+		len(signature) != constanttime.RawURLEncoding.EncodedLen(ed25519.SignatureSize) {
 		return nil, 0, false
 	}
 	now := time.Now().Unix()
@@ -45,11 +46,11 @@ func Verify(key ed25519.PublicKey, method, path, timestamp, nonceText, signature
 	if err != nil || stamp < now-ClockSkewSeconds || stamp > now+ClockSkewSeconds || len(key) != ed25519.PublicKeySize {
 		return nil, 0, false
 	}
-	nonce, err := base64.RawURLEncoding.Strict().DecodeString(nonceText)
+	nonce, err := constanttime.RawURLEncoding.Strict().DecodeString(nonceText)
 	if err != nil || len(nonce) != 16 {
 		return nil, 0, false
 	}
-	sig, err := base64.RawURLEncoding.Strict().DecodeString(signature)
+	sig, err := constanttime.RawURLEncoding.Strict().DecodeString(signature)
 	if err != nil || len(sig) != ed25519.SignatureSize {
 		return nil, 0, false
 	}

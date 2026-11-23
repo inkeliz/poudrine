@@ -3,7 +3,6 @@ package config
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 
+	"github.com/inkeliz/poudrine/internal/constanttime"
 	"github.com/inkeliz/poudrine/internal/packageinfo"
 )
 
@@ -43,7 +43,7 @@ func (o PackageOverlay) Digest() string {
 	slices.Sort(o.OptionsUnset)
 	data, _ := json.Marshal(o) // JSON sorts the keys of DefaultVersions.
 	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	return constanttime.EncodeHex(sum[:])
 }
 
 func (overlays PackageOverlays) Equal(other PackageOverlays) bool {

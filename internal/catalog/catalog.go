@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/inkeliz/poudrine/internal/config"
+	"github.com/inkeliz/poudrine/internal/constanttime"
 	"github.com/inkeliz/poudrine/internal/fsutil"
 	"github.com/inkeliz/poudrine/internal/packageinfo"
 )
@@ -746,7 +747,7 @@ func (c *Catalog) fetchCatalog(ctx context.Context, previous CatalogRevision) (*
 		}
 		revision := CatalogRevision{
 			archive: spec.archive, resource: resp.Request.URL.String(), etag: resp.Header.Get("ETag"),
-			Fingerprint: fmt.Sprintf("%x", sha256.Sum256(m[spec.member+".pub"])),
+			Fingerprint: upstreamFingerprint(m[spec.member+".pub"]),
 			signature:   string(m[spec.member+".sig"]),
 		}
 		// "*" is a request wildcard, never an entity tag for this catalog.
@@ -768,4 +769,9 @@ func (c *Catalog) fetchCatalog(ctx context.Context, previous CatalogRevision) (*
 		return &repo, revision, err
 	}
 	return nil, CatalogRevision{}, errors.New("no upstream catalog")
+}
+
+func upstreamFingerprint(publicKey []byte) string {
+	digest := sha256.Sum256(publicKey)
+	return constanttime.EncodeHex(digest[:])
 }

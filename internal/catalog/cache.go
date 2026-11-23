@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/inkeliz/poudrine/internal/constanttime"
 	"github.com/inkeliz/poudrine/internal/packageinfo"
 )
 
@@ -68,7 +68,7 @@ func NewCache(dir string, limit int64, upstream *url.URL, client *http.Client) (
 		if len(name) != 64 {
 			continue
 		}
-		if _, err := hex.DecodeString(name); err != nil {
+		if !constanttime.ValidHex(name) {
 			continue
 		}
 		info, err := d.Info()
@@ -203,7 +203,7 @@ func VerifyPackage(src io.Reader, dest io.Writer, p packageinfo.Package) error {
 
 func PackageCacheKey(sum string) string {
 	digest := sha256.Sum256([]byte(sum))
-	return hex.EncodeToString(digest[:])
+	return constanttime.EncodeHex(digest[:])
 }
 
 type archiveDownload struct {

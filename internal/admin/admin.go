@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +21,7 @@ import (
 	builderpkg "github.com/inkeliz/poudrine/internal/builder"
 	"github.com/inkeliz/poudrine/internal/catalog"
 	"github.com/inkeliz/poudrine/internal/config"
+	"github.com/inkeliz/poudrine/internal/constanttime"
 	"github.com/inkeliz/poudrine/internal/database"
 	"github.com/inkeliz/poudrine/internal/fsutil"
 	"github.com/inkeliz/poudrine/internal/requestauth"
@@ -94,7 +94,7 @@ func (a *Admin) prepareSetupToken() error {
 	}
 	var raw [32]byte
 	rand.Read(raw[:])
-	token := base64.RawURLEncoding.EncodeToString(raw[:]) + "\n"
+	token := constanttime.RawURLEncoding.EncodeToString(raw[:]) + "\n"
 	return fsutil.CreateFileOnce(a.tokenPath(), []byte(token), 0600)
 }
 

@@ -18,6 +18,7 @@ import (
 	texttemplate "text/template"
 
 	"github.com/inkeliz/poudrine/internal/config"
+	"github.com/inkeliz/poudrine/internal/constanttime"
 	"github.com/inkeliz/poudrine/internal/routes"
 	poudrineweb "github.com/inkeliz/poudrine/internal/web/poudrine"
 )
@@ -50,7 +51,8 @@ func MakeClientInstructions(address, publicKey string) (ClientInstructions, erro
 	}
 	data.RepositoryURL = u.String()
 	data.PublicKey = string(pem.EncodeToMemory(&pem.Block{Type: block.Type, Bytes: block.Bytes}))
-	data.Fingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte(data.PublicKey)))
+	fingerprint := sha256.Sum256([]byte(data.PublicKey))
+	data.Fingerprint = constanttime.EncodeHex(fingerprint[:])
 	data.RepoConfig = fmt.Sprintf(`Poudrine: {
   url: %s,
   pubkey: "/usr/local/etc/pkg/poudrine.pub",

@@ -11,10 +11,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
-	"crypto/subtle"
 	"crypto/x509"
-	"encoding/base32"
-	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -25,6 +22,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/inkeliz/poudrine/internal/constanttime"
 	"github.com/inkeliz/poudrine/internal/packageinfo"
 	"github.com/klauspost/compress/zstd"
 	"github.com/ulikunitz/xz"
@@ -77,7 +75,7 @@ func catalogKey(dir string) (*rsa.PrivateKey, error) {
 // Modern pkg signs the ASCII hexadecimal SHA256 of the member using RSA-SHA256.
 func PkgSignatureDigest(member []byte) []byte {
 	hash := sha256.Sum256(member)
-	signed := sha256.Sum256([]byte(hex.EncodeToString(hash[:])))
+	signed := sha256.Sum256([]byte(constanttime.EncodeHex(hash[:])))
 	return signed[:]
 }
 
@@ -207,7 +205,7 @@ func findFingerprint(dir, hash string) (bool, error) {
 		if !fpFunction.Match(b) || match == nil {
 			return false, fmt.Errorf("invalid pkg fingerprint %q", e.Name())
 		}
-		if constantTimeHexEqual(string(match[1]), hash) {
+		if constanttime.HexEqual(string(match[1]), hash) {
 			return true, nil
 		}
 	}
@@ -238,7 +236,8 @@ func verifyCatalog(m map[string][]byte, member, trust string) error {
 	if len(pub) == 0 || len(sig) == 0 {
 		return errors.New("missing upstream catalog signature")
 	}
-	id := fmt.Sprintf("%x", sha256.Sum256(pub))
+	digest := sha256.Sum256(pub)
+	id := constanttime.EncodeHex(digest[:])
 	if err := checkUpstreamFingerprint(trust, id); err != nil {
 		return err
 	}
@@ -272,13 +271,14 @@ func (c *Catalog) BootstrapSignature(r io.Reader, p packageinfo.Package) ([]byte
 	if err := VerifyPackage(r, h, p); err != nil {
 		return nil, err
 	}
-	digest := sha256.Sum256([]byte(hex.EncodeToString(h.Sum(nil))))
+	digest := sha256.Sum256([]byte(constanttime.EncodeHex(h.Sum(nil))))
 	return rsa.SignPKCS1v15(rand.Reader, c.Key, crypto.SHA256, digest[:])
 }
 
 const pkgAlphabet = "ybndrfg8ejkmcpqxot1uwisza345h769"
 
-var pkgBase32 = base32.NewEncoding(pkgAlphabet).WithPadding(base32.NoPadding)
+var pkgBase32 = constanttime.NewBase32(pkgAlphabet, false)
+var pkgLegacyBase32 = constanttime.NewBase32(pkgAlphabet, true)
 
 func checksumParts(sum string) (kind, value string) {
 	kind, value, ok := strings.Cut(sum, "$")
@@ -306,11 +306,15 @@ func packageHasher(sum string) (hash.Hash, error) {
 	}
 	switch kind {
 	case "1", "8", "10", "11":
-		if len(value) != hex.EncodedLen(h.Size()) || !isHex(value) {
+		if len(value) != 2*h.Size() || !isHex(value) {
 			return nil, errors.New("invalid hex package checksum")
 		}
 	default:
-		if len(value) != (h.Size()*8+4)/5 || strings.Trim(value, pkgAlphabet) != "" {
+		encoding := pkgLegacyBase32
+		if kind == "12" || kind == "13" || kind == "14" {
+			encoding = pkgBase32
+		}
+		if encoding.Decode(make([]byte, h.Size()), value) != 1 {
 			return nil, errors.New("invalid base32 package checksum")
 		}
 	}
@@ -318,7 +322,7 @@ func packageHasher(sum string) (hash.Hash, error) {
 }
 
 func isHex(s string) bool {
-	return strings.Trim(s, "0123456789abcdefABCDEF") == ""
+	return constanttime.ValidHex(s)
 }
 
 func packageHashMatches(sum string, h hash.Hash) bool {
@@ -326,34 +330,10 @@ func packageHashMatches(sum string, h hash.Hash) bool {
 	digest := h.Sum(nil)
 	switch kind {
 	case "1", "8", "10", "11":
-		return constantTimeHexEqual(value, hex.EncodeToString(digest))
+		return constanttime.HexMatches(value, digest)
 	case "12", "13", "14":
-		return subtle.ConstantTimeCompare([]byte(value), []byte(pkgBase32.EncodeToString(digest))) == 1
+		return pkgBase32.Matches(value, digest)
+	default:
+		return pkgLegacyBase32.Matches(value, digest)
 	}
-	// pkg's historical BASE32 codes consume bits from the low end first.
-	var s strings.Builder
-	var bits uint
-	var pending uint32
-	for _, b := range digest {
-		pending |= uint32(b) << bits
-		bits += 8
-		for bits >= 5 {
-			s.WriteByte(pkgAlphabet[pending&31])
-			pending >>= 5
-			bits -= 5
-		}
-	}
-	if bits > 0 {
-		s.WriteByte(pkgAlphabet[pending&31])
-	}
-	return subtle.ConstantTimeCompare([]byte(value), []byte(s.String())) == 1
-}
-
-func constantTimeHexEqual(a, b string) bool {
-	left, err := hex.DecodeString(a)
-	if err != nil {
-		return false
-	}
-	right, err := hex.DecodeString(b)
-	return err == nil && subtle.ConstantTimeCompare(left, right) == 1
 }

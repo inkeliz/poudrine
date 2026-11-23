@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 	"github.com/inkeliz/poudrine/internal/broker"
 	"github.com/inkeliz/poudrine/internal/builder"
 	"github.com/inkeliz/poudrine/internal/config"
+	"github.com/inkeliz/poudrine/internal/constanttime"
 	"github.com/inkeliz/poudrine/internal/public"
 )
 
@@ -63,7 +63,7 @@ func startSupervisedWeb(lifetime, startup context.Context, exe string, o config.
 	ctx, cancel := context.WithCancel(lifetime)
 	web := config.ChildProcess(ctx, exe, cred, "http-child", o.ConfigPath)
 	web.Env = append(web.Env, "POUDRINE_SUPERVISED=1", "POUDRINE_SUPERVISOR_FD=5", "POUDRINE_CONFIG_SNAPSHOT="+string(snapshot),
-		"POUDRINE_ADMIN_KEY="+base64.RawURLEncoding.EncodeToString(key))
+		"POUDRINE_ADMIN_KEY="+constanttime.RawURLEncoding.EncodeToString(key))
 	web.Stdout = os.Stdout
 	web.ExtraFiles = []*os.File{writer, child, deathReader}
 	stats, err := public.OpenManagedStats()

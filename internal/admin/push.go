@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ecdh"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 	catalogpkg "github.com/inkeliz/poudrine/internal/catalog"
+	"github.com/inkeliz/poudrine/internal/constanttime"
 	"github.com/inkeliz/poudrine/internal/database"
 	"github.com/inkeliz/poudrine/internal/packageinfo"
 	"github.com/inkeliz/poudrine/internal/weblocale"
@@ -79,8 +79,8 @@ func (a *Admin) subscribe(w http.ResponseWriter, r *http.Request, body []byte) {
 		http.Error(w, "Expected an HTTPS push endpoint", http.StatusBadRequest)
 		return
 	}
-	auth, authErr := base64.RawURLEncoding.DecodeString(sub.Keys.Auth)
-	raw, keyErr := base64.RawURLEncoding.DecodeString(sub.Keys.P256dh)
+	auth, authErr := constanttime.RawURLEncoding.DecodeString(sub.Keys.Auth)
+	raw, keyErr := constanttime.RawURLEncoding.DecodeString(sub.Keys.P256dh)
 	_, curveErr := ecdh.P256().NewPublicKey(raw)
 	if authErr != nil || len(auth) != 16 || keyErr != nil || curveErr != nil {
 		http.Error(w, "Invalid push encryption keys", http.StatusBadRequest)
@@ -142,7 +142,7 @@ func buildAlert(p database.PushBuild, snapshot *catalogpkg.Snapshot) (alert *pac
 	}
 	id := sha256.Sum256([]byte(fmt.Sprintf("%d/%s", p.Started, p.Pkg)))
 	printer := message.NewPrinter(language.Make(p.Language))
-	return &packageAlert{Body: printer.Sprintf("%s built locally. FreeBSD has %s.", p.Pkg, upstream.Version), Tag: base64.RawURLEncoding.EncodeToString(id[:18])}, false
+	return &packageAlert{Body: printer.Sprintf("%s built locally. FreeBSD has %s.", p.Pkg, upstream.Version), Tag: constanttime.RawURLEncoding.EncodeToString(id[:18])}, false
 }
 
 // retry distinguishes a temporary transport/service failure from an invalid
