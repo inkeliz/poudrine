@@ -151,9 +151,7 @@ func New(stateDir, upstreamURL, fingerprintsDir, localRepoDir string, client *ht
 	if err := fsutil.WriteAtomicFile(filepath.Join(stateDir, "repository.pub"), publicKey, 0644); err != nil {
 		return nil, fmt.Errorf("write repository public key: %w", err)
 	}
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client = upstreamClient(client)
 	return &Catalog{Upstream: u, fingerprints: fingerprintsDir, localDir: localRepoDir, LiveDir: filepath.Join(stateDir, config.LiveArchiveDirName), Client: client, Key: key, PublicKey: publicKey}, nil
 }
 

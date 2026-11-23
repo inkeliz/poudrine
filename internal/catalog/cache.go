@@ -48,7 +48,7 @@ func NewCache(dir string, limit int64, upstream *url.URL, client *http.Client) (
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	c := &Cache{dir: dir, Limit: limit, upstream: upstream, client: client, fill: make(chan struct{}, 1), files: make(map[string]cachedArchive)}
+	c := &Cache{dir: dir, Limit: limit, upstream: upstream, client: upstreamClient(client), fill: make(chan struct{}, 1), files: make(map[string]cachedArchive)}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err

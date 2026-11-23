@@ -10,3 +10,5 @@
 
 
 When using a reverse proxy, configure `trusted_proxy` with only that proxy's address or network. Poudrine accepts `X-Real-IP` from those peers; the proxy must overwrite that header with the observed client address. Networks covering every IPv4 or IPv6 address are rejected. Leave `trusted_proxy` empty for direct connections.
+
+Upstream HTTP redirects stay on the configured mirror hostname and port, except for a standard HTTP-to-HTTPS upgrade. HTTPS cannot redirect back to HTTP. Configure the final mirror URL if a provider redirects to another host. Explicitly configured LAN mirrors remain supported; use HTTPS and trusted DNS for the upstream itself.
