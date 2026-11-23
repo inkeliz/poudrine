@@ -201,7 +201,29 @@ func ScanBuildResults(ctx context.Context, run *os.File, name string, visit func
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		line, err := reader.ReadSlice('\n')
+		// Keep long diagnostic lines, but discard oversized records through
+		// their newline so one malformed entry cannot hide later results.
+		var line []byte
+		oversized := false
+		var err error
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			var fragment []byte
+			fragment, err = reader.ReadSlice('\n')
+			if !oversized {
+				if len(line)+len(fragment) > 1<<20 {
+					oversized = true
+					line = nil
+				} else {
+					line = append(line, fragment...)
+				}
+			}
+			if err != bufio.ErrBufferFull {
+				break
+			}
+		}
 		if err == io.EOF {
 			return nil
 		}
@@ -210,6 +232,9 @@ func ScanBuildResults(ctx context.Context, run *os.File, name string, visit func
 		}
 		if lines >= 250_000 {
 			return errors.New("Poudriere result list exceeds 250,000 records")
+		}
+		if oversized {
+			continue
 		}
 		entry := strings.TrimSpace(string(line))
 		fields := strings.Fields(entry)
