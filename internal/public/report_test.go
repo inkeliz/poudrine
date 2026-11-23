@@ -186,7 +186,11 @@ func TestReportAuthentication(t *testing.T) {
 
 func TestConcurrentInstalledPackageReports(t *testing.T) {
 	repo, _ := inventoryReportFixture(t)
-	results := make(chan int, 3)
+	type result struct {
+		code int
+		body string
+	}
+	results := make(chan result, 3)
 	for _, version := range []string{"1", "2", "3"} {
 		go func() {
 			var body strings.Builder
@@ -196,12 +200,28 @@ func TestConcurrentInstalledPackageReports(t *testing.T) {
 			req := newSignedReport(t, testutil.ReportKey(), routes.ReportInventory.Path, body.String(), time.Now())
 			w := httptest.NewRecorder()
 			repo.ServeHTTP(w, req)
-			results <- w.Code
+			results <- result{w.Code, body.String()}
 		}()
 	}
+	var retry []string
 	for range 3 {
-		if code := <-results; code != 200 {
-			t.Errorf("concurrent report: %d", code)
+		r := <-results
+		switch r.code {
+		case 200:
+		case 429:
+			retry = append(retry, r.body)
+		default:
+			t.Errorf("concurrent report: %d", r.code)
+		}
+	}
+	// Admission rejects overlapping reports from one IP. Once the accepted
+	// report completes, every rejected report can retry with a fresh signature.
+	for _, body := range retry {
+		req := newSignedReport(t, testutil.ReportKey(), routes.ReportInventory.Path, body, time.Now())
+		w := httptest.NewRecorder()
+		repo.ServeHTTP(w, req)
+		if w.Code != 200 {
+			t.Fatalf("retry after admission released: %d", w.Code)
 		}
 	}
 	var count, versions int

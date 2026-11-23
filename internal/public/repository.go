@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	catalogpkg "github.com/inkeliz/poudrine/internal/catalog"
@@ -115,6 +116,17 @@ func (s *Repository) reportInventory(w http.ResponseWriter, r *http.Request) {
 		reportTooLarge()
 		return
 	}
+	ip := s.clientIP(r)
+	release, admitted := s.admitReport(ip)
+	if !admitted {
+		// Do not drain an untrusted oversized or streaming body after rejection.
+		r.Close = true
+		w.Header().Set("Connection", "close")
+		w.Header().Set("Retry-After", "10")
+		http.Error(w, "inventory reports are busy; retry shortly", http.StatusTooManyRequests)
+		return
+	}
+	defer release()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxReportBytes))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
@@ -145,7 +157,7 @@ func (s *Repository) reportInventory(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if err := s.Store.ReplaceReport(r.Context(), s.clientIP(r), requestauth.ReportProof{Key: key, Nonce: nonce, Stamp: stamp}, packages); err != nil {
+	if err := s.Store.ReplaceReport(r.Context(), ip, requestauth.ReportProof{Key: key, Nonce: nonce, Stamp: stamp}, packages); err != nil {
 		switch {
 		case errors.Is(err, database.ErrReportKey):
 			http.Error(w, err.Error(), http.StatusForbidden)
@@ -166,12 +178,14 @@ func (s *Repository) reportInventory(w http.ResponseWriter, r *http.Request) {
 }
 
 type Repository struct {
-	Catalog  *catalogpkg.Catalog `json:"-"`
-	Store    database.DB         `json:"-"`
-	Cache    *catalogpkg.Cache   `json:"-"`
-	LocalDir string              `json:"-"`
-	Proxy    *net.IPNet          `json:"-"`
-	activity chan clientActivity
+	Catalog   *catalogpkg.Catalog `json:"-"`
+	Store     database.DB         `json:"-"`
+	Cache     *catalogpkg.Cache   `json:"-"`
+	LocalDir  string              `json:"-"`
+	Proxy     *net.IPNet          `json:"-"`
+	activity  chan clientActivity
+	reportMu  sync.Mutex
+	reporting map[string]struct{}
 }
 
 func (s *Repository) clientIP(r *http.Request) string {
