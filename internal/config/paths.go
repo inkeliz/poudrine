@@ -316,14 +316,14 @@ func (o *Options) validatePaths() error {
 			return fmt.Errorf("%s: privileged worker storage must be outside the private state directory", p.field)
 		}
 	}
-	// An installation may keep its worker settings and web state on the same
-	// volume. Keep the private data out of the trees Poudriere exposes to jails.
+	// Keep private state outside repository, trust and privileged worker trees.
+	// These directories can be shared, published or mounted into build jails.
 	for _, p := range []settingPath{
+		{"local_repo", o.LocalRepo, true},
+		{"fingerprints", o.Fingerprints, true},
 		{"distfiles", o.Builder.Distfiles, true},
-		{"basefs", filepath.Join(o.Builder.BaseFS, "jails"), true},
-		{"basefs", filepath.Join(o.Builder.BaseFS, "ports"), true},
-		{"basefs", filepath.Join(o.Builder.BaseFS, "data"), true},
-		{"poudriere_config", filepath.Join(o.Builder.ConfigDir, "poudriere.d"), true},
+		{"basefs", o.Builder.BaseFS, true},
+		{"poudriere_config", o.Builder.ConfigDir, true},
 	} {
 		if Within(o.State, p.path) {
 			return fmt.Errorf("state: select a private directory outside %s (%s)", p.field, p.path)

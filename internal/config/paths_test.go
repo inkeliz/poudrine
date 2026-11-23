@@ -104,3 +104,32 @@ func TestHostWorkerStorageAndSymlinks(t *testing.T) {
 		t.Fatal("accepted a missing worker directory in a writable parent")
 	}
 }
+
+func TestPrivateStateOutsideSharedTrees(t *testing.T) {
+	for _, field := range []string{"local_repo", "fingerprints", "basefs", "poudriere_config"} {
+		for _, suffix := range []string{"", "private"} {
+			t.Run(field+"/"+suffix, func(t *testing.T) {
+				c := DefaultConfiguration()
+				root := "/srv/shared"
+				switch field {
+				case "local_repo":
+					c.LocalRepo = root
+				case "fingerprints":
+					c.Fingerprints = root
+				case "basefs":
+					c.BaseFS = root
+				case "poudriere_config":
+					c.PoudriereConfig = root
+				}
+				c.State = filepath.Join(root, suffix)
+				if _, err := c.Options(""); err == nil {
+					t.Fatal("private state overlaps a shared tree")
+				}
+				c.State = root + "-private"
+				if _, err := c.Options(""); err != nil {
+					t.Fatal("sibling state rejected:", err)
+				}
+			})
+		}
+	}
+}

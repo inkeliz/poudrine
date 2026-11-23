@@ -148,3 +148,20 @@ func waitForClients(t *testing.T, db database.DB, count int) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+func TestRepositoryDoesNotServeUnlistedPrivateFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"repository.key", "inventory.sqlite", "setup-token"} {
+		testutil.WriteFile(t, filepath.Join(dir, name), []byte("private"))
+	}
+	cat := &catalog.Catalog{}
+	cat.Current.Store(&catalog.Snapshot{})
+	repo := &Repository{Catalog: cat, LocalDir: dir}
+	for _, name := range []string{"repository.key", "inventory.sqlite", "setup-token"} {
+		w := httptest.NewRecorder()
+		repo.ServeHTTP(w, httptest.NewRequest("GET", "/"+name, nil))
+		if w.Code != http.StatusNotFound || strings.Contains(w.Body.String(), "private") {
+			t.Fatalf("unlisted file %s exposed: %d %q", name, w.Code, w.Body.String())
+		}
+	}
+}
