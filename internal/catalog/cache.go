@@ -255,6 +255,9 @@ func (c *Cache) Open(ctx context.Context, p packageinfo.Package) (*os.File, erro
 		return nil, err
 	}
 	if p.Size <= c.Limit && c.Limit > 0 {
+		if err := f.Sync(); err != nil {
+			return nil, err
+		}
 		for {
 			s := c.catalog.Load()
 			// A download from the previous catalog can finish after publication.
@@ -270,9 +273,6 @@ func (c *Cache) Open(ctx context.Context, p packageinfo.Package) (*os.File, erro
 		}
 		defer c.mu.Unlock()
 		if err := c.makeRoom(p.Size); err != nil {
-			return nil, err
-		}
-		if err := f.Sync(); err != nil {
 			return nil, err
 		}
 		if err := os.Rename(f.Name(), filepath.Join(c.dir, key)); err != nil {
