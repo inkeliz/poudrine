@@ -86,7 +86,11 @@ func poudriereDiskUsage(ctx context.Context, cfg config.Builder) (int64, error) 
 		if err != nil {
 			return 0, err
 		}
-		boundaryBlocks += st.Sys().(*syscall.Stat_t).Blocks
+		stat, ok := st.Sys().(*syscall.Stat_t)
+		if !ok || stat == nil {
+			return 0, fmt.Errorf("missing filesystem metadata for %s", path)
+		}
+		boundaryBlocks += stat.Blocks
 	}
 	args := append([]string{"-scx"}, paths...)
 	cmd := exec.CommandContext(ctx, "/usr/bin/du", args...)

@@ -115,8 +115,9 @@ func CheckBrokerSettings(ctx context.Context, configPath string, old, next Confi
 			return errors.New("state: choose a new state directory under /mnt, /media, /var/db/poudrine-states or a poudrine-* sibling of the active state directory")
 		}
 		if s, err := os.Lstat(after.State); err == nil {
+			st, ok := s.Sys().(*syscall.Stat_t)
 			account, err := user.Lookup(after.ServiceUser)
-			if err != nil || !s.IsDir() || s.Mode().Perm() != 0700 || strconv.FormatUint(uint64(s.Sys().(*syscall.Stat_t).Uid), 10) != account.Uid {
+			if err != nil || !ok || st == nil || !s.IsDir() || s.Mode().Perm() != 0700 || strconv.FormatUint(uint64(st.Uid), 10) != account.Uid {
 				return errors.New("state: an existing web state directory must be private and owned by the selected service account")
 			}
 			entries, err := os.ReadDir(after.State)
@@ -170,7 +171,11 @@ func checkWebServiceUser(ctx context.Context, name, oldState, nextState string) 
 			return err
 		}
 		info, err := os.Lstat(oldState)
-		if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || info.Sys().(*syscall.Stat_t).Uid != uint32(uid) {
+		var st *syscall.Stat_t
+		if err == nil {
+			st, _ = info.Sys().(*syscall.Stat_t)
+		}
+		if err != nil || st == nil || !info.IsDir() || info.Mode().Perm() != 0700 || st.Uid != uint32(uid) {
 			return errors.New("also select a new state directory for the new service user, or give the new account ownership of the existing private Poudrine state")
 		}
 		// A local administrator explicitly assigned this active state to the new account.
@@ -402,7 +407,8 @@ func InspectRootPath(path string, directory, allowLinks bool) (string, bool, err
 		if err != nil {
 			return "", false, err
 		}
-		if info.Sys().(*syscall.Stat_t).Uid != 0 {
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || st == nil || st.Uid != 0 {
 			return "", false, fmt.Errorf("%s must be root-owned", current)
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
@@ -461,7 +467,8 @@ func protectedDirectory(path string) error {
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() || info.Mode().Perm()&0022 != 0 || info.Sys().(*syscall.Stat_t).Uid != 0 {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || st == nil || !info.IsDir() || info.Mode().Perm()&0022 != 0 || st.Uid != 0 {
 		return fmt.Errorf("%s must be a root-owned directory without group or world write access", path)
 	}
 	return nil

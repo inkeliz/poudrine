@@ -92,7 +92,11 @@ func serve(ctx context.Context, o config.Options) error {
 		return err
 	}
 	defer webListener.Close()
-	o.PublicURL, err = o.AdvertisedRepository(repoListener.Addr().(*net.TCPAddr).Port)
+	repoAddr, ok := repoListener.Addr().(*net.TCPAddr)
+	if !ok || repoAddr == nil {
+		return fmt.Errorf("expected a TCP repository listener, got %T", repoListener.Addr())
+	}
+	o.PublicURL, err = o.AdvertisedRepository(repoAddr.Port)
 	if err != nil {
 		return err
 	}
@@ -139,7 +143,7 @@ func serve(ctx context.Context, o config.Options) error {
 		return view, catalog.LoadBuildTimes(ctx, store, snapshot, view.Packages)
 	}
 	api, err := admin.New(ctx, admin.Config{ConfigPath: o.ConfigPath, ActiveSettings: o.ConfigSettings, Builder: o.Builder, Broker: broker, PinnedKey: pinned, DB: db, DataDir: o.State, RepositoryURL: o.PublicURL, WebsiteURL: o.WebsiteURL,
-		RepositoryPort: repoListener.Addr().(*net.TCPAddr).Port, UpstreamURL: o.Upstream,
+		RepositoryPort: repoAddr.Port, UpstreamURL: o.Upstream,
 		PushContact: o.PushContact, PublicKey: func() string { return string(cat.PublicKey) }, Stats: cat.Stats, Clients: store.Clients, Tracked: store.Tracked, Packages: packages, Build: func() (builder.BuildStatus, error) {
 			s, err := builder.ReadBuildStatus(o.Builder.StatusFile)
 			if errors.Is(err, os.ErrNotExist) {

@@ -71,7 +71,8 @@ func restartDirectory(path string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if !info.IsDir() || int(info.Sys().(*syscall.Stat_t).Uid) != os.Geteuid() || info.Mode().Perm()&0022 != 0 {
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || st == nil || !info.IsDir() || int(st.Uid) != os.Geteuid() || info.Mode().Perm()&0022 != 0 {
 			return "", errors.New("restart socket needs a protected service-owned directory")
 		}
 	}
@@ -112,8 +113,11 @@ func listenServiceRestarts(parent context.Context, path string, restart func(con
 		}
 	}()
 	info, err := lock.Stat()
-	if err == nil && (!info.Mode().IsRegular() || info.Mode().Perm() != 0600 || int(info.Sys().(*syscall.Stat_t).Uid) != os.Geteuid() || info.Sys().(*syscall.Stat_t).Nlink != 1) {
-		err = errors.New("unsafe restart socket lock")
+	if err == nil {
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || st == nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || int(st.Uid) != os.Geteuid() || st.Nlink != 1 {
+			err = errors.New("unsafe restart socket lock")
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -123,7 +127,8 @@ func listenServiceRestarts(parent context.Context, path string, restart func(con
 	}
 	info, err = os.Lstat(path)
 	if err == nil {
-		if info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0600 || int(info.Sys().(*syscall.Stat_t).Uid) != os.Geteuid() {
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || st == nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0600 || int(st.Uid) != os.Geteuid() {
 			err = errors.New("refusing to replace an unexpected file at the restart socket")
 			return nil, err
 		}
@@ -381,7 +386,8 @@ func readServiceCheckpoint(o config.Options) (*builder.WorkerCheckpoint, error) 
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || int(info.Sys().(*syscall.Stat_t).Uid) != os.Geteuid() || info.Sys().(*syscall.Stat_t).Nlink != 0 {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || st == nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || int(st.Uid) != os.Geteuid() || st.Nlink != 0 {
 		return nil, errors.New("unexpected inherited service checkpoint")
 	}
 	var state serviceCheckpoint

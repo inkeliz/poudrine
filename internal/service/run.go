@@ -147,7 +147,8 @@ func prepareState(dir string, c *syscall.Credential) error {
 	if err != nil {
 		return err
 	}
-	if !s.IsDir() || s.Sys().(*syscall.Stat_t).Uid != c.Uid || s.Mode().Perm()&0077 != 0 {
+	st, ok := s.Sys().(*syscall.Stat_t)
+	if !ok || st == nil || !s.IsDir() || st.Uid != c.Uid || s.Mode().Perm()&0077 != 0 {
 		return fmt.Errorf("%s must be a private directory owned by the service user", dir)
 	}
 	return nil

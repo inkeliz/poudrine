@@ -171,8 +171,11 @@ func openBuildMetadata(run *os.File, name string) (*os.File, os.FileInfo, error)
 		return nil, nil, err
 	}
 	info, err := f.Stat()
-	if err == nil && (!info.Mode().IsRegular() || info.Sys().(*syscall.Stat_t).Nlink != 1) {
-		err = errors.New("unexpected Poudriere result file")
+	if err == nil {
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || st == nil || !info.Mode().IsRegular() || st.Nlink != 1 {
+			err = errors.New("unexpected Poudriere result file")
+		}
 	}
 	if err != nil {
 		f.Close()
@@ -520,7 +523,11 @@ func ReadBuildIssues(ctx context.Context, cfg config.Builder, started time.Time)
 // exact package. Account for them without following symlinks. An unrelated
 // linked file must never become a readable package log.
 func expectedLogLinks(bulk *os.File, master, pkg string, info os.FileInfo) bool {
-	n := uint64(info.Sys().(*syscall.Stat_t).Nlink)
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || st == nil {
+		return false
+	}
+	n := uint64(st.Nlink)
 	if n == 1 {
 		return true
 	}

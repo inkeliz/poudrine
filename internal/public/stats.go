@@ -42,8 +42,8 @@ func OpenStatsWriter(path string) (*os.File, error) {
 	}
 	info, err := file.Stat()
 	if err == nil {
-		st := info.Sys().(*syscall.Stat_t)
-		if !info.Mode().IsRegular() || st.Nlink != 1 || int(st.Uid) != os.Geteuid() || (!created && info.Mode().Perm() != 0644) {
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || st == nil || !info.Mode().IsRegular() || st.Nlink != 1 || int(st.Uid) != os.Geteuid() || (!created && info.Mode().Perm() != 0644) {
 			err = fmt.Errorf("expected a singly linked 0644 regular file owned by the publisher at %s", path)
 		}
 	}
