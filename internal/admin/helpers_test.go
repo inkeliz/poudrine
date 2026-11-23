@@ -32,8 +32,13 @@ func testAdmin(t *testing.T) *Admin {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	private := func(context.Context) (any, error) { return []string{"private-client.example"}, nil }
-	a, err := New(Config{DB: &database.DB{DB: db}, DataDir: dir, RepositoryURL: "https://repo.example", PublicKey: func() string { return testutil.RepositoryPublicKey }, Stats: func() catalog.CatalogStats { return catalog.CatalogStats{Packages: 12, Ahead: 2} }, Clients: private, Tracked: private, Build: func() (builder.BuildStatus, error) { return builder.BuildStatus{Stage: "waiting"}, nil }})
+	clients := func(context.Context) ([]database.ClientRecord, error) {
+		return []database.ClientRecord{{IP: "private-client.example"}}, nil
+	}
+	tracked := func(context.Context) ([]database.TrackedPackageRecord, error) {
+		return []database.TrackedPackageRecord{{Name: "private-client.example"}}, nil
+	}
+	a, err := New(Config{DB: &database.DB{DB: db}, DataDir: dir, RepositoryURL: "https://repo.example", PublicKey: func() string { return testutil.RepositoryPublicKey }, Stats: func() catalog.CatalogStats { return catalog.CatalogStats{Packages: 12, Ahead: 2} }, Clients: clients, Tracked: tracked, Build: func() (builder.BuildStatus, error) { return builder.BuildStatus{Stage: "waiting"}, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -35,7 +35,7 @@ type TrackedPackageRecord struct {
 	Consumers   int    `json:"consumers"`
 }
 
-func (s DB) Tracked(ctx context.Context) (any, error) {
+func (s DB) Tracked(ctx context.Context) ([]TrackedPackageRecord, error) {
 	return s.TrackedPackages(ctx)
 }
 

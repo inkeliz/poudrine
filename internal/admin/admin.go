@@ -45,7 +45,8 @@ type Config struct {
 	PushContact               string
 	PublicKey                 func() string
 	Stats                     func() catalog.CatalogStats
-	Clients, Tracked          func(context.Context) (any, error)
+	Clients                   func(context.Context) ([]database.ClientRecord, error)
+	Tracked                   func(context.Context) ([]database.TrackedPackageRecord, error)
 	Packages                  func(context.Context, []string) (catalog.PackageInventoryView, error)
 	Build                     func() (builderpkg.BuildStatus, error)
 }
@@ -310,7 +311,7 @@ func (a *Admin) signedEmptyQuery(next func(http.ResponseWriter, *http.Request, [
 	})
 }
 
-func listView(load func(context.Context) (any, error)) func(http.ResponseWriter, *http.Request, []byte) {
+func listView[T any](load func(context.Context) (T, error)) func(http.ResponseWriter, *http.Request, []byte) {
 	return func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		result, err := load(r.Context())
 		if err != nil {

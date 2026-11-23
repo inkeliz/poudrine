@@ -99,7 +99,7 @@ type ClientRecord struct {
 	ReportedAt       int64    `json:"reported_at,omitempty"`
 }
 
-func (s DB) Clients(ctx context.Context) (any, error) {
+func (s DB) Clients(ctx context.Context) ([]ClientRecord, error) {
 	rows, err := s.DB.QueryContext(ctx, `
 SELECT c.ip,c.first_seen,c.last_seen,coalesce(r.reported_at,0),p.name,p.version,coalesce(p.reported,0)
 FROM clients c

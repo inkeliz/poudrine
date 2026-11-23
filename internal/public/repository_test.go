@@ -76,7 +76,7 @@ func TestRepositoryInventoryAndConcurrentMiss(t *testing.T) {
 		t.Fatalf("origins %v, %v", origins, err)
 	}
 	clients, err := s.Clients(ctx)
-	if err != nil || len(clients.([]database.ClientRecord)) != 8 {
+	if err != nil || len(clients) != 8 {
 		t.Fatalf("client inventory %v, %v", clients, err)
 	}
 	r := httptest.NewRequest("GET", "/"+local.Path, nil)
@@ -121,7 +121,7 @@ func TestRepositoryCountsMetadataClientAfterDisconnect(t *testing.T) {
 		t.Fatalf("metadata response %d, client context %v", w.Code, ctx.Err())
 	}
 	clients, err := s.Clients(t.Context())
-	if err != nil || len(clients.([]database.ClientRecord)) != 1 || len(clients.([]database.ClientRecord)[0].Packages) != 0 {
+	if err != nil || len(clients) != 1 || len(clients[0].Packages) != 0 {
 		t.Fatalf("metadata-only client: %v, %v", clients, err)
 	}
 }

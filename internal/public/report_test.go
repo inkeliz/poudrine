@@ -35,7 +35,7 @@ func TestInstalledPackageReport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		rows := clients.([]database.ClientRecord)
+		rows := clients
 		if len(rows) != 1 {
 			t.Fatalf("expected one client, got %d", len(rows))
 		}
@@ -47,7 +47,7 @@ func TestInstalledPackageReport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		rows := targets.([]database.TrackedPackageRecord)
+		rows := targets
 		if len(rows) != 1 {
 			t.Fatalf("expected one tracked target: %+v", rows)
 		}
@@ -135,7 +135,7 @@ func TestReportBoundaries(t *testing.T) {
 	repo.Catalog.Current.Store(nil)
 	inventoryPost(t, repo, "x 1 local/x\n", 503)
 	clients, err := repo.Store.Clients(t.Context())
-	if err != nil || len(clients.([]database.ClientRecord)) != 0 {
+	if err != nil || len(clients) != 0 {
 		t.Fatalf("rejected inputs should leave no entries: %v %v", clients, err)
 	}
 }
