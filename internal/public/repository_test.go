@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/inkeliz/poudrine/internal/catalog"
 	"github.com/inkeliz/poudrine/internal/database"
@@ -55,6 +56,7 @@ func TestRepositoryInventoryAndConcurrentMiss(t *testing.T) {
 	cat.Current.Store(&catalog.Snapshot{ByPath: map[string]packageinfo.Package{p.Path: p, local.Path: local}})
 	_, proxy, _ := net.ParseCIDR("127.0.0.1/32")
 	repo := &Repository{Catalog: cat, Store: s, Cache: cache, LocalDir: dir, Proxy: proxy}
+	defer repo.StartRecording(t.Context())()
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Go(func() {
@@ -69,6 +71,7 @@ func TestRepositoryInventoryAndConcurrentMiss(t *testing.T) {
 		})
 	}
 	wg.Wait()
+	waitForClients(t, s, 8)
 	if calls.Load() != 1 {
 		t.Fatalf("downloaded %d times", calls.Load())
 	}
@@ -109,6 +112,7 @@ func TestRepositoryCountsMetadataClientAfterDisconnect(t *testing.T) {
 	c := &catalog.Catalog{}
 	c.Current.Store(&catalog.Snapshot{Metadata: map[string]catalog.MetadataFile{"meta.conf": {Body: []byte("version = 2;")}}})
 	repo := Repository{Catalog: c, Store: s}
+	defer repo.StartRecording(t.Context())()
 
 	// A pkg client can close its connection as soon as the catalog headers
 	// arrive. The handler still owes the inventory a record of that visit.
@@ -120,8 +124,27 @@ func TestRepositoryCountsMetadataClientAfterDisconnect(t *testing.T) {
 	if w.Code != http.StatusOK || ctx.Err() == nil {
 		t.Fatalf("metadata response %d, client context %v", w.Code, ctx.Err())
 	}
+	waitForClients(t, s, 1)
 	clients, err := s.Clients(t.Context())
 	if err != nil || len(clients) != 1 || len(clients[0].Packages) != 0 {
 		t.Fatalf("metadata-only client: %v, %v", clients, err)
+	}
+}
+
+func waitForClients(t *testing.T, db database.DB, count int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		clients, err := db.Clients(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(clients) == count {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("got %d clients, want %d", len(clients), count)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

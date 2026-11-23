@@ -3,7 +3,6 @@ package public
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -183,6 +182,7 @@ type Repository struct {
 	Cache    *catalogpkg.Cache   `json:"-"`
 	LocalDir string              `json:"-"`
 	Proxy    *net.IPNet          `json:"-"`
+	activity chan clientActivity
 }
 
 func (s *Repository) clientIP(r *http.Request) string {
@@ -215,13 +215,7 @@ func (s *Repository) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := s.clientIP(r)
 	if s.Catalog.Metadata(w, r, rel) {
-		// The response has already been sent, so the client can disconnect
-		// before SQLite commits this visit.
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
-		defer cancel()
-		if err := s.Store.Record(ctx, ip, nil); err != nil {
-			log.Printf("record metadata request: %v", err)
-		}
+		s.recordActivity(ip, nil)
 		return
 	}
 	p, ok := s.Catalog.Package(rel)
@@ -270,10 +264,7 @@ func (s *Repository) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	if r.Method == "HEAD" {
-		if err := s.Store.Record(r.Context(), ip, nil); err != nil {
-			http.Error(w, "inventory unavailable", 503)
-			return
-		}
+		s.recordActivity(ip, nil)
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		return
 	}
@@ -322,10 +313,6 @@ func (s *Repository) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		content = bytes.NewReader(sig)
 		tracked = nil
 	}
-	if err := s.Store.Record(r.Context(), ip, tracked); err != nil {
-		log.Printf("record package request: %v", err)
-		http.Error(w, "inventory unavailable", 503)
-		return
-	}
+	s.recordActivity(ip, tracked)
 	http.ServeContent(w, r, path.Base(rel), time.Time{}, content)
 }

@@ -93,6 +93,7 @@ func serveHTTP(ctx context.Context, o config.Options, repoListener, webListener 
 		webScheme = "https"
 	}
 	runCtx, cancel := context.WithCancel(ctx)
+	stopRecording := repo.StartRecording(runCtx)
 	// End live Management streams promptly when this service generation stops.
 	webServer.BaseContext = func(net.Listener) context.Context { return runCtx }
 	var wg sync.WaitGroup
@@ -118,6 +119,7 @@ func serveHTTP(ctx context.Context, o config.Options, repoListener, webListener 
 				_ = server.Close()
 			}
 		}
+		stopRecording()
 		wg.Wait()
 	}()
 
