@@ -6,7 +6,46 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/inkeliz/poudrine/internal/requestauth"
 )
+
+func TestAdminNonceCleanupIsIndependent(t *testing.T) {
+	db, err := Open(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := t.Context()
+	if err := db.PrepareAdmin(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Truncate(time.Second)
+	old := now.Unix() - requestauth.ClockSkewSeconds - 1
+	for _, stamp := range []int64{old, now.Unix()} {
+		nonce := []byte(time.Unix(stamp, 0).String())
+		if ok, err := db.ConsumeAdminNonce(ctx, nonce, stamp); err != nil || !ok {
+			t.Fatalf("first use: %v, %v", ok, err)
+		}
+		if ok, err := db.ConsumeAdminNonce(ctx, nonce, stamp); err != nil || ok {
+			t.Fatalf("replay: %v, %v", ok, err)
+		}
+	}
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM admin_nonces").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("request cleaned nonces: %d, %v", count, err)
+	}
+	if err := db.CleanupAdminNonces(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT count(*) FROM admin_nonces").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("cleanup: %d, %v", count, err)
+	}
+	nonce := []byte(now.String())
+	if ok, err := db.ConsumeAdminNonce(ctx, nonce, now.Unix()); err != nil || ok {
+		t.Fatalf("cleanup allowed live replay: %v, %v", ok, err)
+	}
+}
 
 func TestAdminDatabaseCancellationWhileWaiting(t *testing.T) {
 	db, err := Open(t.TempDir(), false)
@@ -34,6 +73,7 @@ func TestAdminDatabaseCancellationWhileWaiting(t *testing.T) {
 			_, err := db.ConsumeAdminNonce(ctx, []byte("nonce"), time.Now().Unix())
 			return err
 		},
+		"cleanup":             func(ctx context.Context) error { return db.CleanupAdminNonces(ctx, time.Now()) },
 		"push keys":           func(ctx context.Context) error { _, _, err := db.PushKeys(ctx); return err },
 		"save push keys":      func(ctx context.Context) error { return db.SavePushKeys(ctx, "private", "public") },
 		"subscribe":           func(ctx context.Context) error { return db.SubscribePush(ctx, "endpoint", "auth", "key", "en") },

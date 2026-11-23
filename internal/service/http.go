@@ -108,6 +108,7 @@ func serveHTTP(ctx context.Context, o config.Options, repoListener, webListener 
 	wg.Go(func() { monitor(runCtx, o, repo.Catalog, repo.Cache, publicStats) })
 	wg.Go(func() { catalog.MonitorLivePackages(runCtx, o, repo.Catalog) })
 	wg.Go(func() { api.DispatchBuildPush(runCtx, repo.Catalog) })
+	wg.Go(func() { api.CleanupNonces(runCtx) })
 	defer func() {
 		cancel()
 		end, stop := context.WithTimeout(context.Background(), 10*time.Second)

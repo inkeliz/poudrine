@@ -87,23 +87,17 @@ func (s DB) EnrollAdmin(ctx context.Context, key ed25519.PublicKey) (int64, erro
 }
 
 func (s DB) ConsumeAdminNonce(ctx context.Context, nonce []byte, stamp int64) (bool, error) {
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, "DELETE FROM admin_nonces WHERE expires < ?", time.Now().Unix()); err != nil {
-		return false, err
-	}
-	res, err := tx.ExecContext(ctx, "INSERT INTO admin_nonces(nonce,expires) VALUES(?,?) ON CONFLICT DO NOTHING", nonce, stamp+requestauth.ClockSkewSeconds)
+	res, err := s.DB.ExecContext(ctx, "INSERT INTO admin_nonces(nonce,expires) VALUES(?,?) ON CONFLICT DO NOTHING", nonce, stamp+requestauth.ClockSkewSeconds)
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
-	if err != nil || n == 0 {
-		return false, err
-	}
-	return true, tx.Commit()
+	return n != 0, err
+}
+
+func (s DB) CleanupAdminNonces(ctx context.Context, now time.Time) error {
+	_, err := s.DB.ExecContext(ctx, "DELETE FROM admin_nonces WHERE expires < ?", now.Unix())
+	return err
 }
 
 // ReadAdminKey reads a prior enrollment without creating a database or tables.
