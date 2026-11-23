@@ -112,6 +112,9 @@ func serveHTTP(ctx context.Context, o config.Options, repoListener, webListener 
 	wg.Go(func() { api.CleanupNonces(runCtx) })
 	defer func() {
 		cancel()
+		// Release both ports before waiting for active downloads to finish.
+		repoListener.Close()
+		webListener.Close()
 		end, stop := context.WithTimeout(context.Background(), 10*time.Second)
 		defer stop()
 		for _, server := range []*http.Server{repoServer, webServer} {

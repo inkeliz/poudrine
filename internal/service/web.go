@@ -53,18 +53,25 @@ func startSupervisedWeb(lifetime, startup context.Context, exe string, o config.
 		return nil, err
 	}
 	defer reader.Close()
+	deathReader, deathWriter, err := os.Pipe()
+	if err != nil {
+		writer.Close()
+		parent.Close()
+		return nil, err
+	}
+	defer deathReader.Close()
 	ctx, cancel := context.WithCancel(lifetime)
 	web := config.ChildProcess(ctx, exe, cred, "http-child", o.ConfigPath)
-	web.Env = append(web.Env, "POUDRINE_SUPERVISED=1", "POUDRINE_CONFIG_SNAPSHOT="+string(snapshot),
+	web.Env = append(web.Env, "POUDRINE_SUPERVISED=1", "POUDRINE_SUPERVISOR_FD=5", "POUDRINE_CONFIG_SNAPSHOT="+string(snapshot),
 		"POUDRINE_ADMIN_KEY="+base64.RawURLEncoding.EncodeToString(key))
 	web.Stdout = os.Stdout
-	web.ExtraFiles = []*os.File{writer, child}
+	web.ExtraFiles = []*os.File{writer, child, deathReader}
 	stats, err := public.OpenManagedStats()
 	if err != nil {
 		log.Printf("public stats unavailable: %v", err)
 	} else {
 		web.ExtraFiles = append(web.ExtraFiles, stats)
-		web.Env = append(web.Env, "POUDRINE_STATS_FD=5")
+		web.Env = append(web.Env, "POUDRINE_STATS_FD=6")
 		defer stats.Close()
 	}
 	err = web.Start()
@@ -72,6 +79,7 @@ func startSupervisedWeb(lifetime, startup context.Context, exe string, o config.
 	child.Close()
 	if err != nil {
 		cancel()
+		deathWriter.Close()
 		parent.Close()
 		return nil, fmt.Errorf("launch unprivileged web service: %w", err)
 	}
@@ -82,6 +90,7 @@ func startSupervisedWeb(lifetime, startup context.Context, exe string, o config.
 	}()
 	w := &supervisedWeb{cancel: cancel, done: make(chan struct{})}
 	go func() {
+		defer deathWriter.Close()
 		w.err = web.Wait()
 		cancel()
 		<-brokerDone
@@ -247,4 +256,31 @@ func runServiceGenerations(parent context.Context, exe string, o config.Options,
 			}
 		}
 	}
+}
+
+// The supervisor alone holds the write end, with close-on-exec set. EOF also
+// detects SIGKILL or a crash, without relying on platform-specific death signals
+// or racing a parent PID check. Cancellation closes the reader and joins it.
+func watchSupervisor(parent context.Context, fd int) (context.Context, context.CancelFunc, error) {
+	syscall.CloseOnExec(fd)
+	// ExtraFiles descriptors arrive in blocking mode. Register this pipe with
+	// Go's poller so closing it also interrupts a read during normal shutdown.
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		return nil, nil, fmt.Errorf("open supervisor lifetime pipe: %w", err)
+	}
+	pipe := os.NewFile(uintptr(fd), "supervisor-lifetime")
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer cancel()
+		_, _ = io.Copy(io.Discard, pipe)
+	}()
+	closeOnCancel := context.AfterFunc(ctx, func() { pipe.Close() })
+	return ctx, func() {
+		cancel()
+		pipe.Close()
+		closeOnCancel()
+		<-done
+	}, nil
 }

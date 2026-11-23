@@ -28,17 +28,26 @@ func serve(ctx context.Context, o config.Options) error {
 	var pinned ed25519.PublicKey
 	var publicStats *os.File
 	if os.Getenv("POUDRINE_SUPERVISED") == "1" {
+		if os.Getenv("POUDRINE_SUPERVISOR_FD") != "5" {
+			return errors.New("missing supervisor lifetime pipe")
+		}
+		var stop context.CancelFunc
+		var err error
+		ctx, stop, err = watchSupervisor(ctx, 5)
+		if err != nil {
+			return err
+		}
+		defer stop()
 		syscall.CloseOnExec(3)
 		syscall.CloseOnExec(4)
 		f := os.NewFile(4, "config-broker")
 		defer f.Close()
 		broker = brokerpkg.NewClient(f)
-		if os.Getenv("POUDRINE_STATS_FD") == "5" {
-			syscall.CloseOnExec(5)
-			publicStats = os.NewFile(5, config.PublicStatsFile)
+		if os.Getenv("POUDRINE_STATS_FD") == "6" {
+			syscall.CloseOnExec(6)
+			publicStats = os.NewFile(6, config.PublicStatsFile)
 			defer publicStats.Close()
 		}
-		var err error
 		pinned, err = base64.RawURLEncoding.DecodeString(os.Getenv("POUDRINE_ADMIN_KEY"))
 		if err != nil {
 			return err
