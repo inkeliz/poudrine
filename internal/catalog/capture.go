@@ -343,6 +343,9 @@ func (s *LiveArchiveStore) capture(ctx context.Context, source *os.File, before 
 	}
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
+	if err := syscall.Flock(int(tmp.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return LivePackage{}, err
+	}
 	h := sha256.New()
 	stop := context.AfterFunc(ctx, func() { source.Close() })
 	defer stop()

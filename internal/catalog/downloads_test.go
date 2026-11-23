@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -66,4 +67,48 @@ func TestLiveDownloadRetention(t *testing.T) {
 	hasDownload(ready, true)
 	sweep(end.Add(liveDownloadGrace))
 	hasDownload(ready, false)
+}
+
+func TestPrunePreservesActiveCapture(t *testing.T) {
+	c := &Catalog{LiveDir: t.TempDir()}
+	now := time.Now()
+	paths := map[string]string{}
+	for _, name := range []string{"fresh", "old", "active"} {
+		path := filepath.Join(c.LiveDir, ".capture-"+name)
+		if err := os.WriteFile(path, []byte("data"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		paths[name] = path
+		if name != "fresh" {
+			if err := os.Chtimes(path, now.Add(-2*time.Hour), now.Add(-2*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	active, err := os.Open(paths["active"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer active.Close()
+	if err := syscall.Flock(int(active.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if err := PruneLiveDownloads(c, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range paths {
+		_, err := os.Stat(path)
+		if (err == nil) != (name != "old") {
+			t.Fatalf("capture %s: %v", name, err)
+		}
+	}
+	active.Close()
+	if err := PruneLiveDownloads(c, nil, now.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("abandoned capture remained: %v", err)
+		}
+	}
 }

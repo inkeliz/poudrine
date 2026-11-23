@@ -191,6 +191,12 @@ func PruneLiveDownloads(cat *Catalog, candidates map[string]LivePackage, now tim
 				continue
 			}
 			path := filepath.Join(dir, name)
+			if strings.HasPrefix(name, ".capture-") {
+				if err := pruneCapture(path, now); err != nil {
+					return err
+				}
+				continue
+			}
 			switch dir {
 			case published:
 				// The retirement time survives restarts. Old clients can use
@@ -218,6 +224,46 @@ func PruneLiveDownloads(cat *Catalog, candidates map[string]LivePackage, now tim
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// Recent temporary files may belong to an active capture. An old capture can
+// also be active on slow storage; its descriptor lock protects it until close.
+func pruneCapture(path string, now time.Time) error {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || now.Sub(info.ModTime()) < time.Hour {
+		return nil
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil
+		}
+		return err
+	}
+	current, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(info, current) {
+		return nil
+	}
+	if err := os.Remove(path); !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	return nil
 }
