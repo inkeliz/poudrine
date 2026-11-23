@@ -25,3 +25,18 @@ func TestScanBuildResultsLongLines(t *testing.T) {
 		t.Fatalf("long line stopped scan or partial record exposed: %v, %v", packages, err)
 	}
 }
+
+func TestQueueRetryRejectsInvalidBatch(t *testing.T) {
+	b := &Builder{retryOrigins: map[string]struct{}{"devel/existing": {}}}
+	for _, origin := range []string{"", "-option", "../escape", "devel/one\ndevel/two", "devel/pkg;command", "devel/" + strings.Repeat("x", 256)} {
+		if b.QueueRetry([]string{"devel/valid", origin}) {
+			t.Fatalf("accepted %q", origin)
+		}
+		if len(b.retryOrigins) != 1 {
+			t.Fatalf("invalid batch changed retries: %v", b.retryOrigins)
+		}
+	}
+	if !b.QueueRetry([]string{"devel/valid@flavor~subpackage"}) {
+		t.Fatal("valid flavor/subpackage rejected")
+	}
+}

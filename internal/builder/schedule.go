@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/inkeliz/poudrine/internal/config"
+	"github.com/inkeliz/poudrine/internal/packageinfo"
 )
 
 func (b *Builder) CurrentWorkingHours() config.WorkingHours {
@@ -125,6 +126,12 @@ stat() {
 // Multiple retry clicks share the pending targeted run, separate from a
 // regular manual build, which still processes the entire tracked list.
 func (b *Builder) QueueRetry(origins []string) bool {
+	// Reject the entire batch before mutating or persisting pending work.
+	for _, origin := range origins {
+		if len(origin) > 255 || !packageinfo.BuildOrigin.MatchString(origin) {
+			return false
+		}
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.retryOrigins == nil {
