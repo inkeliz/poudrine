@@ -246,6 +246,9 @@ func (s DB) BuildHistory(ctx context.Context, interval string, now time.Time) (B
 	if err := rows.Err(); err != nil {
 		return BuildHistory{}, err
 	}
+	if err := rows.Close(); err != nil {
+		return BuildHistory{}, err
+	}
 	recent, err := tx.QueryContext(ctx, `SELECT package,outcome,started_ns,finished_ns,seconds FROM package_builds
  LEFT JOIN package_build_times USING(started_ns,package,outcome)
  WHERE finished_ns >= ? AND finished_ns <= ?
@@ -265,6 +268,9 @@ func (s DB) BuildHistory(ctx context.Context, interval string, now time.Time) (B
 		out.Recent = append(out.Recent, r)
 	}
 	if err := recent.Err(); err != nil {
+		return BuildHistory{}, err
+	}
+	if err := recent.Close(); err != nil {
 		return BuildHistory{}, err
 	}
 	return out, tx.Commit()
