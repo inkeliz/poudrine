@@ -163,6 +163,9 @@ func checkProxyCIDR(value string) error {
 	if err != nil {
 		return errors.New("expected an IPv4 or IPv6 network in CIDR notation")
 	}
+	if prefix.Bits() == 0 || prefix.Addr().Is4In6() && prefix.Bits() <= 96 {
+		return errors.New("trust a specific proxy address or network, not all client addresses")
+	}
 	if network := prefix.Masked(); network != prefix {
 		return fmt.Errorf("use %s for the network or %s/%d for a single proxy", network, prefix.Addr(), prefix.Addr().BitLen())
 	}
