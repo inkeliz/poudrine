@@ -242,6 +242,8 @@
 .log-button {width: 2.75rem; height: 2.75rem; padding: 0; flex: none}
 #build-jobs .log-button {justify-self: end; align-self: center}
 #build-log, .history-values {margin-top: .8rem; border-top: 1px solid var(--line)}
+#build-reasons {margin-bottom: .8rem}
+#build-reasons h3 {margin-bottom: .35rem; font: var(--weight-semibold) 1rem/1.4 var(--sans)}
 #build-log > summary, .history-values > summary {padding-block: .7rem; width: fit-content; max-width: 100%; color: var(--ink); font-size: .89rem}
 #build-results {margin-top: 1.15rem; border: 2px solid var(--edge); background: var(--well); box-shadow: 3px 3px 0 var(--dark)}
 #build-results > summary {display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding: .65rem .9rem; list-style: none; border-inline-start: .35rem solid var(--gold); background: var(--raised); font: var(--weight-semibold) 1.1rem/1.4 var(--sans)}

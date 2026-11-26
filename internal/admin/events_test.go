@@ -35,7 +35,8 @@ func TestLiveBuildEvents(t *testing.T) {
 			admin.cfg.Builder.Jobs = configured
 			key := enrollAdmin(t, admin)
 			started := time.Now().UTC()
-			initial := builder.BuildStatus{Stage: "building", Active: true, Started: started, Log: []string{"configure\ncompile"}}
+			initial := builder.BuildStatus{Stage: "building", Active: true, Started: started, Log: []string{"configure\ncompile"},
+				RebuildReasons: []string{"Deleting gettext-tools-1.0_1.pkg: changed options"}}
 			// A real large queue must pass the broker's frame limit without
 			// losing jobs or mixing a control response into the event stream.
 			for i := range 750 {
@@ -122,7 +123,8 @@ func TestLiveBuildEvents(t *testing.T) {
 				return view
 			}
 			view := next()
-			if view.BuilderCapacity != lastSlot || !reflect.DeepEqual(view.Jobs, wantJobs) || view.CanForce != (mode == "supervised") || !reflect.DeepEqual(view.Log, initial.Log) {
+			if view.BuilderCapacity != lastSlot || !reflect.DeepEqual(view.Jobs, wantJobs) || view.CanForce != (mode == "supervised") || !reflect.DeepEqual(view.Log, initial.Log) ||
+				!slices.Equal(view.RebuildReasons, initial.RebuildReasons) {
 				t.Fatalf("incomplete initial event: %d jobs, can_force=%t", len(view.Jobs), view.CanForce)
 			}
 			duplicate := req.Clone(ctx)

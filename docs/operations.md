@@ -53,6 +53,8 @@ Poudrine checks the FreeBSD metadata every five minutes by default. When the mir
 
 **Phase** shows the build tool’s percentage when available. Otherwise, a percentage labeled **est.** compares active build time with the last successful build of the same package, flavor and ABI. Hover over **Elapsed** to see the estimated time left or how far the build has run past that estimate. Working-hours and service-restart pauses freeze the estimate. A pause in the previous build can make the estimate too high.
 
+When Poudriere builds an already published version, open **Build activity → Worker output** and look under **First rebuild reasons**. The worker keeps up to eight messages explaining why Poudriere deleted archives, even after those messages scroll out of the log. Repository-wide cleanups take priority. A jail version change can clear every package, and a changed dependency can trigger many rebuilds. The next run starts with an empty list.
+
 **Run build now** updates the jail and ports tree and starts an incremental bulk build. **Queue next build** reserves one follow-up while a build is active. With no tracked origins, the worker still updates the jail and ports tree. Between scheduled runs it checks for changes to the tracked origins every 30 seconds.
 
 Open **Build history → Build run history** for the latest run’s package results. The selector lists each retained run’s start time and compiled package count. Use **←** for an older run and **→** for a newer one. Choose **All runs** to include empty runs or **With results** to see runs with built, failed or skipped packages.

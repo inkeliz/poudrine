@@ -879,16 +879,22 @@ function createBuildView(request, el, node) {
     el("next-build-detail").textContent = detail;
 
     const log = el("build-log-text"), details = el("build-log");
+    const reasons = (build.rebuild_reasons || []).join("\n");
+    const reasonText = el("build-reasons-text");
+    if (reasonText.textContent !== reasons) reasonText.textContent = reasons;
+    el("build-reasons").hidden = !reasons;
+
     const entries = build.log || [];
     // A command failure can be returned separately from the captured output.
     const lines = packageFailure && build.message && !entries.includes(build.message)
       ? [...entries, build.message].join("\n") : entries.join("\n");
+    log.hidden = !lines;
     if (log.textContent !== lines) {
       const follow = log.scrollTop + log.clientHeight >= log.scrollHeight - 3;
       log.textContent = lines;
       if (follow && details.open) log.scrollTop = log.scrollHeight;
     }
-    details.hidden = !lines;
+    details.hidden = !lines && !reasons;
     const button = el("force-build");
     button.disabled = !build.can_force || build.manual_pending || submitting || waitingForWorker;
     button.textContent = submitting ? "Requesting…" : build.manual_pending || waitingForWorker ? "Build queued" : active ? "Queue next build" : opening ? "Queue build" : "Run build now";

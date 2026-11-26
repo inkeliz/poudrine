@@ -3,9 +3,11 @@ package builder
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +35,43 @@ func TestLogRetriesFailedStatusWrite(t *testing.T) {
 	status, err := ReadBuildStatus(cfg.StatusFile)
 	if err != nil || strings.Join(status.Log, "\n") != "first line\nsecond line" || !b.LastWrite.After(lastWrite) {
 		t.Fatalf("next log line did not persist the pending status: %+v, %v", status.Log, err)
+	}
+}
+
+func TestBulkRebuildReasonsSurviveLogRotation(t *testing.T) {
+	b := &Builder{Cfg: testutil.WorkerConfig(t.TempDir())}
+	out := &BuildOutput{B: b, bulk: true}
+	fmt.Fprintln(out, "=>> Deleting stale symlinks... done")
+	fmt.Fprintln(out, "[00:00:02] Deleting empty directories... done")
+	var want []string
+	for i := range 10 {
+		reason := fmt.Sprintf("Deleting package-%d.pkg: changed options", i)
+		fmt.Fprintf(out, "[00:00:03] \x1b[32m%s\x1b[0m\n", reason)
+		fmt.Fprintln(out, "=>> "+reason) // Same native message at a different point.
+		if i < 6 {
+			want = append(want, reason)
+		}
+	}
+	for _, cause := range []string{"newer version of jail", "pkg bootstrap missing: unable to inspect existing packages"} {
+		reason := cause + ", cleaning all packages..."
+		fmt.Fprintln(out, "[1D:01:05:12] "+reason+" done")
+		fmt.Fprintln(out, reason)
+		want = append(want, reason)
+	}
+	for range 42 {
+		fmt.Fprintln(out, "Building another package")
+	}
+	s := b.Status()
+	if len(s.Log) != 40 || s.Log[0] != "Building another package" || !slices.Equal(s.RebuildReasons, want) {
+		t.Fatalf("tail length %d, rebuild reasons %q; want %q", len(s.Log), s.RebuildReasons, want)
+	}
+	s.RebuildReasons[0] = "different"
+	if b.Status().RebuildReasons[0] != want[0] {
+		t.Fatal("status snapshot shares the worker's rebuild reasons")
+	}
+	b.begin(time.Now(), "manual", nil, time.Time{}, false)
+	if got := b.Status().RebuildReasons; len(got) != 0 {
+		t.Fatalf("new run inherited previous reasons: %v", got)
 	}
 }
 
@@ -86,8 +125,11 @@ func TestWorkerCommands(t *testing.T) {
 echo "$*" >> "$POUDRINE_TEST_CALLS"
 shift 3
 case "$1 $2" in
+"jail -c") echo "Deleting unrelated.pkg: changed options" ;;
 "ports -l") echo main ;;
-"bulk -j") echo "Building ftp/curl" ;;
+"bulk -j")
+  echo "=>> Deleting curl-1.pkg: missing dependency: openssl-1"
+  echo "Building ftp/curl" ;;
 esac
 `, 0755)
 	t.Setenv("PATH", root+":"+os.Getenv("PATH"))
@@ -129,7 +171,8 @@ esac
 		t.Fatalf("calls: %s", calls)
 	}
 	s, err := ReadBuildStatus(c.StatusFile)
-	if err != nil || s.Stage != "idle" || len(s.Log) != 1 || s.Log[0] != "Building ftp/curl" || s.Finished.Before(s.Started) {
+	if err != nil || s.Stage != "idle" || len(s.Log) != 3 || s.Log[2] != "Building ftp/curl" ||
+		!slices.Equal(s.RebuildReasons, []string{"Deleting curl-1.pkg: missing dependency: openssl-1"}) || s.Finished.Before(s.Started) {
 		t.Fatalf("status: %+v %v", s, err)
 	}
 	got, err := os.ReadFile(c.PackagesFile)

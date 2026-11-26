@@ -115,7 +115,14 @@
       <p id="worker-mode" class="build-feedback" hidden>Manual builds are available when the Poudrine service runs the build worker.</p>
       <p id="build-feedback" class="build-feedback" role="status" hidden></p>
       <p id="build-poll-error" class="build-feedback" role="status" hidden></p>
-      <details id="build-log" hidden><summary>Worker output</summary><pre id="build-log-text" tabindex="0" aria-label="Worker output"></pre></details>
+      <details id="build-log" hidden>
+        <summary>Worker output</summary>
+        <section id="build-reasons" aria-labelledby="build-reasons-heading" hidden>
+          <h3 id="build-reasons-heading">First rebuild reasons</h3>
+          <pre id="build-reasons-text" tabindex="0" aria-labelledby="build-reasons-heading"></pre>
+        </section>
+        <pre id="build-log-text" tabindex="0" aria-label="Worker output"></pre>
+      </details>
     </section>
     <section class="panel build-history" aria-labelledby="history-heading">
       <div class="panel-heading history-head">

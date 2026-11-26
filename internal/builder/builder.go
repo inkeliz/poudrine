@@ -49,6 +49,7 @@ type BuildStatus struct {
 	Stage            string         `json:"stage"`
 	Message          string         `json:"message"`
 	Log              []string       `json:"log"`
+	RebuildReasons   []string       `json:"rebuild_reasons,omitempty"`
 	Started          time.Time      `json:"started"`
 	Finished         time.Time      `json:"finished"`
 }
@@ -143,6 +144,7 @@ func (b *Builder) snapshotLocked() BuildStatus {
 	s.BuilderCapacity = max(s.BuilderCapacity, int64(b.Cfg.Jobs))
 	s.RetryPending = len(b.retryOrigins)
 	s.Log = slices.Clone(s.Log)
+	s.RebuildReasons = slices.Clone(s.RebuildReasons)
 	s.Jobs = slices.Clone(s.Jobs)
 	for i := range s.Jobs {
 		job := &s.Jobs[i]
@@ -244,13 +246,13 @@ func (b *Builder) stage(s, msg string) {
 // os/exec serializes calls to a shared stdout/stderr writer.
 type BuildOutput struct {
 	B       *Builder `json:"-"`
+	bulk    bool
 	partial []byte
 }
 
 var terminalEscape = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\|$))`)
 
-// Keep control sequences and binary data out of web-visible status. With
-// 40 lines capped at 1 KiB, even JSON escaping fits in the supervisor frame.
+// Keep control sequences and binary data out of web-visible status.
 func BuildText(s string) string {
 	s = strings.ToValidUTF8(s[:min(len(s), 1024)], "?")
 	s = terminalEscape.ReplaceAllString(s, "")
@@ -266,6 +268,37 @@ func BuildText(s string) string {
 	return strings.TrimSpace(s)
 }
 
+const cleanAllPackages = ", cleaning all packages..."
+
+// Poudriere prefixes its messages with an elapsed time or "=>>". Nested
+// messages omit both. delete_all_pkgs appends " done" on success.
+var bulkRebuildMessage = regexp.MustCompile(`^(?:\[(?:\d+D:)?\d{2}:\d{2}:\d{2}\] +)?(?:=>> +)?(Deleting [^\s:]+: \S.*|.+, cleaning all packages\.\.\.)(?: done)?$`)
+
+func recordRebuildReason(reasons []string, line string) []string {
+	const limit = 8
+	if !strings.Contains(line, "Deleting ") && !strings.Contains(line, cleanAllPackages) {
+		return reasons
+	}
+	match := bulkRebuildMessage.FindStringSubmatch(line)
+	if match == nil || slices.Contains(reasons, match[1]) {
+		return reasons
+	}
+	reason := match[1]
+	if len(reasons) < limit {
+		return append(reasons, reason)
+	}
+	// A repository-wide clean explains more than any one package deletion.
+	// Keep the earliest per-package messages and append the clean in order.
+	if strings.HasSuffix(reason, cleanAllPackages) {
+		for i := len(reasons) - 1; i >= 0; i-- {
+			if !strings.HasSuffix(reasons[i], cleanAllPackages) {
+				return append(slices.Delete(reasons, i, i+1), reason)
+			}
+		}
+	}
+	return reasons
+}
+
 func (w *BuildOutput) line() {
 	line := BuildText(string(w.partial))
 	w.partial = w.partial[:0]
@@ -278,6 +311,9 @@ func (w *BuildOutput) line() {
 	b.status.Log = append(b.status.Log, line)
 	if len(b.status.Log) > 40 {
 		b.status.Log = b.status.Log[1:]
+	}
+	if w.bulk {
+		b.status.RebuildReasons = recordRebuildReason(b.status.RebuildReasons, line)
 	}
 	if time.Since(b.LastWrite) > time.Second {
 		b.persistLocked()
@@ -301,7 +337,7 @@ func (b *Builder) command(ctx context.Context, names bool, args ...string) (stri
 	if err := b.waitForWindow(ctx, false); err != nil {
 		return "", err
 	}
-	out := &BuildOutput{B: b}
+	out := &BuildOutput{B: b, bulk: len(args) > 0 && args[0] == "bulk"}
 	defer out.line()
 	var list bytes.Buffer
 	var stdout io.Writer = out
