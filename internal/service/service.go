@@ -183,8 +183,8 @@ func monitor(ctx context.Context, o config.Options, cat *catalog.Catalog, cache 
 		}
 		if snapshot := cat.Current.Load(); snapshot != nil && (checked || snapshot != reported) {
 			reported = snapshot
-			if err := cache.PruneCompiled(snapshot); err != nil {
-				log.Printf("prune compiled packages from download cache: %v", err)
+			if err := cache.Prune(snapshot); err != nil {
+				log.Printf("prune download cache: %v", err)
 			}
 			stats := cat.Stats()
 			if publicStats != nil {

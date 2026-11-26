@@ -193,7 +193,7 @@ func TestCatalogOverlayProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cache.PruneCompiled(s); err != nil || cache.Bytes != 0 {
+	if err := cache.Prune(s); err != nil || cache.Bytes != 0 {
 		t.Fatalf("stock bytes left in cache: %d, err: %v", cache.Bytes, err)
 	}
 }

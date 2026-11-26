@@ -16,7 +16,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -43,8 +42,8 @@ type Cache struct {
 	downloads map[string]*archiveDownload
 	mu        sync.Mutex
 	files     map[string]cachedArchive
-	catalog   atomic.Pointer[Snapshot]
-	Bytes     int64 `json:"-"`
+	catalog   *Snapshot // guarded by mu
+	Bytes     int64     `json:"-"`
 }
 
 func NewCache(dir string, limit int64, upstream *url.URL, client *http.Client) (*Cache, error) {
@@ -151,35 +150,64 @@ func (c *Cache) discardIfSame(e cachedArchive, info os.FileInfo) error {
 	return c.remove(e)
 }
 
-func (s *Snapshot) supersedes(p packageinfo.Package) bool {
+// offersDownload reports whether clients of the published catalog get p from
+// FreeBSD. Locally served rows never use the download cache.
+func (s *Snapshot) offersDownload(p packageinfo.Package) bool {
 	if s == nil {
-		return false
+		return true // Before the first successful refresh.
 	}
-	if _, overlaid := s.Overlays[packageinfo.BasePort(p.Origin)]; overlaid {
-		return true
-	}
-	local, ok := s.Compiled[p.Name]
-	if !ok || p.Version == "" || local.Origin != p.Origin || local.BuildOrigin != p.BuildOrigin ||
-		!packageinfo.CompatibleABI(local.ABI, p.ABI) || ComparePkgVersions(local.Version, p.Version) < 0 {
-		return false
-	}
-	file := s.compiledFiles[p.Name]
-	return file != nil && file.verify(local) == nil
+	current, ok := s.ByPath[s.PathByName[p.Name]]
+	return ok && !current.Local && current.Sum == p.Sum && current.Size == p.Size
 }
 
-func (c *Cache) PruneCompiled(s *Snapshot) error {
-	c.catalog.Store(s)
-	if len(s.Compiled) == 0 && len(s.Overlays) == 0 {
+// Prune keeps the upstream checksums advertised by the published packagesite.
+// A version can stay the same when the archive checksum changes. Cache keys
+// already identify the signed checksum, so refreshing never reads archive data.
+func (c *Cache) Prune(s *Snapshot) error {
+	if s == nil {
+		return nil
+	}
+	c.mu.Lock()
+	c.catalog = s
+	candidates := make(map[string]packageinfo.Package)
+	sizes := make(map[int64]bool)
+	for key, e := range c.files {
+		if !s.offersDownload(e.Package) {
+			candidates[key] = packageinfo.Package{Size: e.Package.Size}
+			sizes[e.Package.Size] = true
+		}
+	}
+	c.mu.Unlock()
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// After a restart only the filename and size are needed. Also keep a
+	// checksum still advertised under a different package name or path.
+	for _, p := range s.ByPath {
+		if !p.Local && sizes[p.Size] {
+			key := PackageCacheKey(p.Sum)
+			if e, ok := candidates[key]; ok && e.Size == p.Size {
+				candidates[key] = p
+			}
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.catalog != s {
 		return nil
 	}
 	var errs error
-	for _, e := range c.Inventory(s) {
-		if s.supersedes(e.Package) {
-			c.mu.Lock()
-			if entry, ok := c.files[e.Key]; ok {
-				errs = errors.Join(errs, c.remove(entry))
-			}
-			c.mu.Unlock()
+	for key, p := range candidates {
+		e, ok := c.files[key]
+		if !ok || e.Package.Size != p.Size {
+			continue
+		}
+		if p.Sum == "" {
+			errs = errors.Join(errs, c.remove(e))
+		} else {
+			e.Package = p
+			c.files[key] = e
 		}
 	}
 	return errs
@@ -295,18 +323,11 @@ func (c *Cache) storeDownload(ctx context.Context, p packageinfo.Package, key st
 	if err := f.Sync(); err != nil {
 		return err
 	}
-	for {
-		s := c.catalog.Load()
-		if s.supersedes(p) {
-			return nil
-		}
-		c.mu.Lock()
-		if s == c.catalog.Load() {
-			break
-		}
-		c.mu.Unlock()
-	}
+	c.mu.Lock()
 	defer c.mu.Unlock()
+	if !c.catalog.offersDownload(p) {
+		return nil // A refresh retired this checksum while the transfer was running.
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

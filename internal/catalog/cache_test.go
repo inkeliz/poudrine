@@ -113,49 +113,40 @@ func TestLegacyCacheIdentityFromCatalog(t *testing.T) {
 	}
 }
 
-func TestPruneCompiledCache(t *testing.T) {
+func TestCachePruneUsesPublishedPackage(t *testing.T) {
+	const body = "from FreeBSD"
+	upstream := testutil.Package("wheel", body)
 	for _, tc := range []struct {
-		label, cachedVersion, localVersion, localABI, localFlavor, localBytes string
-		remove                                                                bool
+		name         string
+		localBody    string
+		publishLocal bool
 	}{
-		{"equal", "1.0", "1", "freebsd:15:amd64", "one", "local", true},
-		{"newer epoch", "9_3", "1,1", "freebsd:15:*", "one", "local", true},
-		{"older revision", "2_2", "2_1", "freebsd:15:amd64", "one", "local", false},
-		{"different flavor", "1", "2", "freebsd:15:amd64", "two", "local", false},
-		{"different ABI", "1", "2", "freebsd:14:amd64", "one", "local", false},
-		{"corrupt local", "1", "2", "freebsd:15:amd64", "one", "wrong", false},
+		{"upstream selected despite local build", "local", false},
+		{"local selected with upstream retained for display", "local", true},
+		{"local selected with identical checksum", body, true},
 	} {
-		t.Run(tc.label, func(t *testing.T) {
-			const bytes = "from FreeBSD"
-			p := testutil.Package("wheel", bytes)
-			p.Version, p.ABI, p.BuildOrigin = tc.cachedVersion, "freebsd:15:amd64", p.Origin+"@one"
+		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			path := filepath.Join(dir, PackageCacheKey(p.Sum))
-			if err := os.WriteFile(path, []byte(bytes), 0600); err != nil {
-				t.Fatal(err)
-			}
+			key := PackageCacheKey(upstream.Sum)
+			path := filepath.Join(dir, key)
+			testutil.WriteFile(t, path, []byte(body))
 			cache, err := NewCache(dir, 1024, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			local := testutil.Package("wheel", "local")
-			local.Version, local.BuildOrigin, local.ABI = tc.localVersion, local.Origin+"@"+tc.localFlavor, tc.localABI
-			s := compiledFixture(t, local, tc.localBytes)
-			s.PathByName = map[string]string{p.Name: p.Path}
-			s.Displaced = map[string]packageinfo.Package{p.Name: p}
-			// The old cache was reopened with no manifest identity. The signed
-			// displaced entry supplies the identity before the first prune.
-			if err := cache.PruneCompiled(s); err != nil {
+			local := testutil.Package("wheel", tc.localBody)
+			s := cachePublication(upstream, local, tc.publishLocal)
+			if err := cache.Prune(s); err != nil {
 				t.Fatal(err)
 			}
 			list := cache.Inventory(s)
-			_, statErr := os.Stat(path)
-			if tc.remove {
-				if len(list) != 0 || cache.Bytes != 0 || !os.IsNotExist(statErr) {
-					t.Fatalf("redundant archive survived: %v, %d bytes, stat %v", list, cache.Bytes, statErr)
+			_, err = os.Stat(path)
+			if tc.publishLocal {
+				if len(list) != 0 || cache.Bytes != 0 || !os.IsNotExist(err) {
+					t.Fatalf("cache retained displaced upstream: entries %v, bytes %d, stat %v", list, cache.Bytes, err)
 				}
-			} else if len(list) != 1 || list[0].Package != p || cache.Bytes != p.Size || statErr != nil {
-				t.Fatalf("lost retained archive: %v, %d bytes, stat %v", list, cache.Bytes, statErr)
+			} else if len(list) != 1 || list[0].Package != upstream || cache.Bytes != upstream.Size || err != nil {
+				t.Fatalf("lost selected upstream: entries %v, bytes %d, stat %v", list, cache.Bytes, err)
 			}
 		})
 	}
@@ -166,9 +157,12 @@ func TestCacheDownloadDuringLocalPublication(t *testing.T) {
 	p := testutil.Package("wheel", bytes)
 	local := testutil.Package("wheel", "local")
 	started, finish := make(chan struct{}), make(chan struct{})
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		close(started)
-		<-finish
+		if requests.Add(1) == 1 {
+			close(started)
+			<-finish
+		}
 		fmt.Fprint(w, bytes)
 	}))
 	defer server.Close()
@@ -177,7 +171,11 @@ func TestCacheDownloadDuringLocalPublication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := compiledFixture(t, local, "local")
+	publishedUpstream := cachePublication(p, local, false)
+	if err := cache.Prune(publishedUpstream); err != nil {
+		t.Fatal(err)
+	}
+	publishedLocal := cachePublication(p, local, true)
 	done := make(chan error, 1)
 	go func() {
 		f, err := cache.Open(t.Context(), p)
@@ -192,17 +190,24 @@ func TestCacheDownloadDuringLocalPublication(t *testing.T) {
 		done <- err
 	}()
 	<-started
-	err = cache.PruneCompiled(s)
+	err = cache.Prune(publishedLocal)
 	close(finish)
 	if fetchErr := <-done; err != nil || fetchErr != nil {
 		t.Fatalf("prune %v, fetch %v", err, fetchErr)
 	}
-	if list := cache.Inventory(s); len(list) != 0 || cache.Bytes != 0 {
+	if list := cache.Inventory(publishedLocal); len(list) != 0 || cache.Bytes != 0 {
 		t.Fatalf("late download repopulated cache: %v", list)
 	}
-	// If the compiled archive disappears, an upstream request may again be cached.
-	if err := os.Remove(s.compiledFiles[p.Name].Path); err != nil || s.supersedes(p) {
-		t.Fatalf("missing local archive still overrides upstream: %v", err)
+	if err := cache.Prune(publishedUpstream); err != nil {
+		t.Fatal(err)
+	}
+	f, err := cache.Open(t.Context(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if list := cache.Inventory(publishedUpstream); len(list) != 1 || list[0].Package != p || cache.Bytes != p.Size || requests.Load() != 2 {
+		t.Fatalf("republished upstream not cached: entries %v, bytes %d, requests %d", list, cache.Bytes, requests.Load())
 	}
 }
 

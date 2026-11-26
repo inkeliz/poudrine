@@ -90,7 +90,9 @@ pkg update -f -r Poudrine
 pkg rquery -r Poudrine '%n-%v' firefox
 ```
 
-Use **Compiled** for local builds, **Cached** for downloaded archives, or **Different from FreeBSD** for compiled archives whose version differs from FreeBSD’s. After a successful catalog check, Poudrine removes cached copies when a matching local build has the same or a newer version. A newer FreeBSD download stays cached.
+Use **Compiled** for local builds, **Cached** for downloaded archives, or **Different from FreeBSD** for compiled archives whose version differs from FreeBSD’s.
+
+On a successful refresh, Poudrine keeps cached downloads whose checksum and size match an upstream archive in the published `packagesite`. If the checksum changes under the same package version, Poudrine deletes the stale file. The next request fetches the new archive. If `packagesite` selects a local Poudriere build, clients receive that build directly. Cleanup uses cache keys and sizes without rereading package contents.
 
 On a cache miss, Poudrine starts forwarding arriving package bytes while the shared download continues. Up to sixteen distinct archives can download at once, and clients requesting the same archive share that transfer. Each client can start at byte zero or request a byte range. The final response byte waits for whole-archive verification; a checksum failure ends the response as incomplete. Arriving bytes are stored directly in a shared temporary file, which remains readable by other clients until their readers close. This avoids retaining package payloads in Go heap buffers.
 

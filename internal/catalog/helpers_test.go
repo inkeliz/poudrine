@@ -1,25 +1,17 @@
 package catalog
 
-import (
-	"os"
-	"path/filepath"
-	"testing"
+import "github.com/inkeliz/poudrine/internal/packageinfo"
 
-	"github.com/inkeliz/poudrine/internal/packageinfo"
-)
-
-func compiledFixture(t *testing.T, p packageinfo.Package, body string) *Snapshot {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "compiled.pkg")
-	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
-		t.Fatal(err)
+// Keep the local archive in Compiled even when packagesite selects the upstream.
+func cachePublication(upstream, local packageinfo.Package, publishLocal bool) *Snapshot {
+	local.Local = true
+	selected := upstream
+	s := &Snapshot{Compiled: map[string]packageinfo.Package{local.Name: local}}
+	if publishLocal {
+		selected = local
+		s.Displaced = map[string]packageinfo.Package{upstream.Name: upstream}
 	}
-	stat, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &Snapshot{
-		Compiled:      map[string]packageinfo.Package{p.Name: p},
-		compiledFiles: map[string]*CompiledArchive{p.Name: {Path: path, Info: stat}},
-	}
+	s.ByPath = map[string]packageinfo.Package{selected.Path: selected}
+	s.PathByName = map[string]string{selected.Name: selected.Path}
+	return s
 }

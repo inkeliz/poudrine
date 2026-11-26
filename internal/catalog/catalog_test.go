@@ -133,7 +133,7 @@ func TestCatalogTrustMergeAndRefresh(t *testing.T) {
 	}
 	equal, ok := c.Package("All/tie-1.pkg")
 	upTie, upstreamOK := snapshot.FreeBSDPackage("tie")
-	if !ok || !equal.Local || !upstreamOK || upTie.Sum == equal.Sum || !snapshot.supersedes(upTie) {
+	if !ok || !equal.Local || !upstreamOK || upTie.Sum == equal.Sum || snapshot.offersDownload(upTie) {
 		t.Fatalf("equal-version selection or eviction: local %+v, upstream %+v", equal, upTie)
 	}
 	if _, ok := snapshot.FreeBSDPackage("bonus"); ok || !snapshot.Fetched["bonus"] {
