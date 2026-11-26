@@ -51,6 +51,12 @@ type ArchiveReader struct {
 	once     sync.Once
 }
 
+// CachedFile returns the open file on a disk cache hit, or nil for a live
+// download. The reader owns the file until Close.
+func (r *ArchiveReader) CachedFile() *os.File {
+	return r.file
+}
+
 func (c *Cache) Stream(ctx context.Context, p packageinfo.Package) (*ArchiveReader, error) {
 	if _, err := packageHasher(p.Sum); err != nil {
 		return nil, err

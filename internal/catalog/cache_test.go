@@ -260,3 +260,67 @@ func TestCacheLRUAndIntegrity(t *testing.T) {
 		t.Fatalf("corrupt package changed cache: %d", cache.Bytes)
 	}
 }
+
+func TestDiscardCacheFilePreservesReplacement(t *testing.T) {
+	const body = "right"
+	p := testutil.Package("test", body)
+	var requests atomic.Int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		fmt.Fprint(w, body)
+	}))
+	defer up.Close()
+	u, _ := url.Parse(up.URL)
+	dir := t.TempDir()
+	path := filepath.Join(dir, PackageCacheKey(p.Sum))
+	if err := os.WriteFile(path, []byte("wrong"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewCache(dir, 100, u, up.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad, err := c.Stream(t.Context(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bad.Close()
+	f := bad.CachedFile()
+	if f == nil || VerifyPackage(bad, io.Discard, p) == nil {
+		t.Fatal("expected a corrupt disk hit")
+	}
+	if err := c.DiscardFile(p, f); err != nil {
+		t.Fatal(err)
+	}
+	read := func() {
+		t.Helper()
+		r, err := c.Stream(t.Context(), p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		data, err := io.ReadAll(r)
+		if err != nil || string(data) != body {
+			t.Fatalf("body %q, error %v", data, err)
+		}
+		if err := r.Verify(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read()
+	// A slower request now reports the same failed descriptor.
+	if err := c.DiscardFile(p, f); err != nil {
+		t.Fatal(err)
+	}
+	read()
+	if requests.Load() != 1 || c.Bytes != p.Size {
+		t.Fatalf("late failure discarded new entry: requests %d, bytes %d", requests.Load(), c.Bytes)
+	}
+	if err := os.Truncate(path, 1); err != nil {
+		t.Fatal(err)
+	}
+	read()
+	if requests.Load() != 2 || c.Bytes != p.Size {
+		t.Fatalf("truncated entry was not replaced: requests %d, bytes %d", requests.Load(), c.Bytes)
+	}
+}

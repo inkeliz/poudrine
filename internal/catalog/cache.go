@@ -120,6 +120,36 @@ func (c *Cache) remove(e cachedArchive) error {
 	return nil
 }
 
+// DiscardFile evicts a failed cache hit while preserving a replacement that
+// another request may already have downloaded. The caller keeps f open.
+func (c *Cache) DiscardFile(p packageinfo.Package, f *os.File) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.files[PackageCacheKey(p.Sum)]
+	if !ok {
+		return nil
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	return c.discardIfSame(e, info)
+}
+
+// discardIfSame is called while holding mu.
+func (c *Cache) discardIfSame(e cachedArchive, info os.FileInfo) error {
+	current, err := os.Lstat(filepath.Join(c.dir, e.Key))
+	if errors.Is(err, os.ErrNotExist) {
+		delete(c.files, e.Key)
+		c.Bytes -= e.Package.Size
+		return nil
+	}
+	if err != nil || !os.SameFile(info, current) {
+		return err
+	}
+	return c.remove(e)
+}
+
 func (s *Snapshot) supersedes(p packageinfo.Package) bool {
 	if s == nil {
 		return false
@@ -161,7 +191,7 @@ func (c *Cache) hit(key string, p packageinfo.Package) (*os.File, error) {
 		return nil, nil
 	}
 	path := filepath.Join(c.dir, key)
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		delete(c.files, key)
 		c.Bytes -= e.Package.Size
@@ -170,17 +200,27 @@ func (c *Cache) hit(key string, p packageinfo.Package) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if p.Size != e.Package.Size {
-		f.Close()
-		return nil, errUntrustedPackage
-	}
-	e.Used = time.Now()
-	e.Package = p
-	c.files[key] = e
-	if err := os.Chtimes(path, e.Used, e.Used); err != nil {
+	info, err := f.Stat()
+	if err != nil {
 		f.Close()
 		return nil, err
 	}
+	if !info.Mode().IsRegular() || (e.Package.Sum != "" && e.Package.Size != p.Size) {
+		f.Close()
+		return nil, errUntrustedPackage
+	}
+	if info.Size() != p.Size || e.Package.Size != p.Size {
+		defer f.Close()
+		return nil, c.discardIfSame(e, info)
+	}
+	e.Used = time.Now()
+	tv := syscall.NsecToTimeval(e.Used.UnixNano())
+	if err := syscall.Futimes(int(f.Fd()), []syscall.Timeval{tv, tv}); err != nil {
+		f.Close()
+		return nil, err
+	}
+	e.Package = p
+	c.files[key] = e
 	return f, nil
 }
 
