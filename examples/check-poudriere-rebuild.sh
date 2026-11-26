@@ -1,6 +1,8 @@
 #!/bin/sh
 # From the checkout, run this on the builder and save the report locally:
 #   ssh user@builder sh -s < examples/check-poudriere-rebuild.sh > rebuild-report.txt
+# To compare the two reported runs, use this command from the checkout:
+#   ssh user@builder sh -s -- --compare 2026-11-24_16h38m47s.279112079 2026-11-26_08h56m56s.301942898 < examples/check-poudriere-rebuild.sh > rebuild-comparison.txt
 # On the builder, open or follow a log using a full path printed in the report:
 #   less /full/path/to/package.log
 #   tail -f /full/path/to/package.log
@@ -52,9 +54,75 @@ show_logs() {
     done
 }
 
+package_inputs() {
+    run=$1
+    pkg=$2
+    # Both sources are from this dated run. Stop before the compiler output.
+    awk '
+        { sub(/^\[[^]]+\][[:space:]]*/, "") }
+        NR > 4096 || /^=+<phase:/ { exit }
+        /^(Port dir (last git commit|unclean checkout):|Ports top (last git commit|unclean checkout):|Jail OSVERSION:|FLAVOR=)/ { print }
+        /^---Begin OPTIONS List---/ { options = 1; next }
+        /^---End OPTIONS List---/ { complete = options; exit }
+        options && $1 ~ /=(on|off):?$/ { sub(/:$/, "", $1); print "option", $1 }
+        END { if (!complete) exit 1 }
+    ' "$run/logs/$pkg.log" || return 1
+    awk -v pkg="$pkg" '$1 == pkg {print "dependency", $2}' "$run/.poudriere.pkg_deps%"
+}
+
+earlier=
+if [ "${1:-}" = "--compare" ]; then
+    if [ "$#" -lt 3 ] || [ "$2" = "$3" ]; then
+        echo 'Usage: --compare EARLIER_RUN LATER_RUN [package-version ...]' >&2
+        exit 1
+    fi
+    earlier=$runs/$2
+    later=$runs/$3
+    shift 3
+fi
 if [ "$#" -eq 0 ]; then
     set -- python312-3.12.16_1 gettext-tools-1.0_1
 fi
+if [ -z "$earlier" ]; then
+    for pkg do show_logs "$pkg"; done
+    exit 0
+fi
+
+printf '\nComparing %s and %s\n' "${earlier##*/}" "${later##*/}"
+awk '
+    NF < 2 { next }
+    FILENAME == ARGV[1] { early[$2] = 1; next }
+    { late[$2] = 1 }
+    END {
+        for (pkg in late) if (pkg in early) repeated++
+        printf "Unique package IDs compiled: %d earlier, %d later, %d in both\n",
+            length(early), length(late), repeated
+    }
+' "$earlier/.poudriere.ports.built" "$later/.poudriere.ports.built" || exit 1
+
+for snapshot in "$repo/.latest" "$repo/.building"; do
+    [ -d "$snapshot" ] || continue
+    grep -H . "$snapshot/.buildname"
+    ls -liL "$snapshot/Latest/pkg.pkg" 2>&1
+    for pkg do
+        ls -liL "$snapshot/All/$pkg.pkg" 2>&1
+    done
+done
+
+scratch=$(mktemp -d) || exit 1
+trap 'rm -rf "$scratch"' EXIT
 for pkg do
-    show_logs "$pkg"
+    printf '\nRecorded port, options and direct dependencies for %s\n' "$pkg"
+    if ! package_inputs "$earlier" "$pkg" > "$scratch/earlier" ||
+        ! package_inputs "$later" "$pkg" > "$scratch/later"; then
+        echo 'Comparison unavailable (incomplete package log or missing dependency graph).'
+        continue
+    fi
+    LC_ALL=C sort -u -o "$scratch/earlier" "$scratch/earlier" || exit 1
+    LC_ALL=C sort -u -o "$scratch/later" "$scratch/later" || exit 1
+    if diff -u -L earlier -L later "$scratch/earlier" "$scratch/later"; then
+        echo 'No differences in these recorded inputs.'
+    else
+        [ "$?" -eq 1 ] || exit 1
+    fi
 done
