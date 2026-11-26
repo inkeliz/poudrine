@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	catalogpkg "github.com/inkeliz/poudrine/internal/catalog"
@@ -293,7 +294,7 @@ func (s *Repository) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if p.Live {
 				f, err = s.Catalog.OpenLiveDownload(catalogpkg.LiveDownloadDigest(p.Path))
 			} else {
-				f, err = os.Open(filepath.Join(s.LocalDir, filepath.FromSlash(p.Path)))
+				f, err = openRepoArchive(s.LocalDir, p.Path)
 			}
 			if err == nil {
 				defer f.Close()
@@ -330,4 +331,13 @@ func (s *Repository) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.recordActivity(ip, tracked)
 	http.ServeContent(w, r, path.Base(rel), time.Time{}, content)
+}
+
+func openRepoArchive(dir, name string) (*os.File, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.OpenFile(filepath.FromSlash(name), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 }

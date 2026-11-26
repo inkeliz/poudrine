@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -165,5 +167,25 @@ func TestRepositoryAbortsCorruptStreamWithoutCaching(t *testing.T) {
 				t.Fatalf("cached corrupt archive: %v", entries)
 			}
 		})
+	}
+}
+
+func TestNativeArchiveAliasesStayInsideRepository(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, filepath.Join(dir, "Hashed", "wheel.pkg"), []byte("wheel"))
+	if err := os.Symlink("Hashed/wheel.pkg", filepath.Join(dir, "wheel.pkg")); err != nil {
+		t.Fatal(err)
+	}
+	f, err := openRepoArchive(dir, "wheel.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if err := os.Symlink("../", filepath.Join(dir, "parent")); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := openRepoArchive(dir, "parent"); err == nil {
+		f.Close()
+		t.Fatal("opened a target outside the local repository")
 	}
 }
