@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"hash"
 	"io"
 	"maps"
 	"net/http"
@@ -224,8 +225,30 @@ func (c *Cache) hit(key string, p packageinfo.Package) (*os.File, error) {
 	return f, nil
 }
 
+// PackageChecksum compares a stream of archive bytes with a signed pkg checksum.
+type PackageChecksum struct {
+	digest hash.Hash
+	sum    string
+}
+
+func NewPackageChecksum(sum string) (*PackageChecksum, error) {
+	h, err := packageHasher(sum)
+	if err != nil {
+		return nil, err
+	}
+	return &PackageChecksum{digest: h, sum: sum}, nil
+}
+
+func (c *PackageChecksum) Write(p []byte) (int, error) {
+	return c.digest.Write(p)
+}
+
+func (c *PackageChecksum) Matches() bool {
+	return packageHashMatches(c.sum, c.digest)
+}
+
 func VerifyPackage(src io.Reader, dest io.Writer, p packageinfo.Package) error {
-	h, err := packageHasher(p.Sum)
+	h, err := NewPackageChecksum(p.Sum)
 	if err != nil {
 		return err
 	}
@@ -236,7 +259,7 @@ func VerifyPackage(src io.Reader, dest io.Writer, p packageinfo.Package) error {
 	if err != nil {
 		return err
 	}
-	if n != p.Size || !packageHashMatches(p.Sum, h) {
+	if n != p.Size || !h.Matches() {
 		return errUntrustedPackage
 	}
 	return nil

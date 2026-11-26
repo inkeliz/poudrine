@@ -170,6 +170,66 @@ func TestRepositoryAbortsCorruptStreamWithoutCaching(t *testing.T) {
 	}
 }
 
+func TestDiskArchiveStreamsBeforeChecksum(t *testing.T) {
+	for _, source := range []string{"native", "cache"} {
+		t.Run(source, func(t *testing.T) {
+			good := bytes.Repeat([]byte("package"), 64<<10)
+			p := testutil.Package("disk", string(good))
+			p.Local = source == "native"
+			dir := t.TempDir()
+			name := filepath.Join(dir, catalog.PackageCacheKey(p.Sum))
+			if p.Local {
+				name = filepath.Join(dir, p.Path)
+			}
+			damaged := bytes.Clone(good)
+			damaged[len(damaged)-1] ^= 1
+			testutil.WriteFile(t, name, damaged)
+
+			repo := &Repository{Catalog: &catalog.Catalog{}, LocalDir: dir}
+			repo.Catalog.Current.Store(&catalog.Snapshot{ByPath: map[string]packageinfo.Package{p.Path: p}})
+			if !p.Local {
+				cache, err := catalog.NewCache(dir, int64(len(good)), nil, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				repo.Cache = cache
+			}
+			server := httptest.NewServer(repo)
+			defer server.Close()
+			url := server.URL + "/" + p.Path
+			req, err := http.NewRequest("GET", url, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Range", "bytes=8-15")
+			part, err := server.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err := io.ReadAll(part.Body)
+			part.Body.Close()
+			if part.StatusCode != http.StatusPartialContent || err != nil || !bytes.Equal(b, good[8:16]) {
+				t.Fatalf("range: status %d, bytes %q, error %v", part.StatusCode, b, err)
+			}
+
+			resp, err := server.Client().Get(url)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK || len(b) == 0 || len(b) >= len(good) || err == nil || !bytes.HasPrefix(good, b) {
+				t.Fatalf("corrupt full stream: status %d, bytes %d/%d, error %v", resp.StatusCode, len(b), len(good), err)
+			}
+			if !p.Local {
+				if _, err := os.Lstat(name); !os.IsNotExist(err) {
+					t.Fatalf("corrupt cache entry: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestNativeArchiveAliasesStayInsideRepository(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, filepath.Join(dir, "Hashed", "wheel.pkg"), []byte("wheel"))

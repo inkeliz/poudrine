@@ -272,24 +272,10 @@ func (s *Repository) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		return
 	}
-	if !p.Local && !isSignature {
-		content, err := s.Cache.Stream(r.Context(), p)
-		if err != nil {
-			log.Printf("open stream %q: %v", p.Path, err)
-			http.Error(w, "package unavailable", http.StatusBadGateway)
-			return
-		}
-		defer content.Close()
-		s.recordActivity(ip, &p)
-		serveStream(w, r, rel, content)
-		return
-	}
+	var stream *catalogpkg.ArchiveReader
 	var err error
-	if p.Local {
-		if !filepath.IsLocal(p.Path) {
-			http.Error(w, "invalid local path", 502)
-			return
-		}
+	switch {
+	case p.Local:
 		if f == nil {
 			if p.Live {
 				f, err = s.Catalog.OpenLiveDownload(catalogpkg.LiveDownloadDigest(p.Path))
@@ -301,38 +287,46 @@ func (s *Repository) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err == nil {
-			err = catalogpkg.VerifyPackage(f, io.Discard, p)
-			if err == nil {
-				_, err = f.Seek(0, io.SeekStart)
+			var info os.FileInfo
+			info, err = f.Stat()
+			if err == nil && (!info.Mode().IsRegular() || info.Size() != p.Size) {
+				err = errors.New("archive type or size differs from catalog")
 			}
 		}
-	} else {
+	case isSignature:
 		f, err = s.Cache.Open(r.Context(), p)
 		if err == nil {
 			defer f.Close()
 		}
+	default:
+		stream, err = s.Cache.Stream(r.Context(), p)
+		if err == nil {
+			defer stream.Close()
+			f = stream.CachedFile()
+		}
 	}
 	if err != nil {
 		log.Printf("serve %q: %v", p.Path, err)
-		http.Error(w, "package unavailable", 502)
+		http.Error(w, "package unavailable", http.StatusBadGateway)
 		return
 	}
-	var content io.ReadSeeker = f
-	tracked := &p
 	if isSignature {
 		sig, err := s.Catalog.BootstrapSignature(f, p)
 		if err != nil {
 			log.Printf("sign bootstrap package: %v", err)
-			http.Error(w, "signature unavailable", 502)
+			http.Error(w, "signature unavailable", http.StatusBadGateway)
 			return
 		}
-		content = bytes.NewReader(sig)
-		tracked = nil
+		s.recordActivity(ip, nil)
+		http.ServeContent(w, r, path.Base(rel), time.Time{}, bytes.NewReader(sig))
+		return
 	}
-	s.recordActivity(ip, tracked)
-	http.ServeContent(w, r, path.Base(rel), time.Time{}, content)
+	s.recordActivity(ip, &p)
+	s.serveArchive(w, r, rel, p, f, stream)
 }
 
+// The first bytes may be sent before the digest is known. Resolve native
+// package aliases inside the repository so a link cannot expose host files.
 func openRepoArchive(dir, name string) (*os.File, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {

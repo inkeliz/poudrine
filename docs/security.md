@@ -21,4 +21,10 @@ Repository connections are limited to sixteen per TCP peer, with a 30-minute con
 
 Up to sixteen distinct upstream archives can download concurrently. Requests for the same checksum share a live download, with independent positions for ordinary and ranged reads. Arriving bytes go directly to a shared private temporary file; each reader has its own offset and waits for new bytes as needed. Package payloads are not retained in Go heap buffers. Temporary download space is additional to the persistent cache limit. Only fully verified archives enter that cache.
 
-Streaming sends an archive prefix before its checksum can be verified. Poudrine withholds the final response byte, including for range responses, until the complete archive passes its signed size and checksum checks. Failure aborts the response as incomplete. Clients must still verify the catalog checksum before using an archive. Bootstrap signatures are generated only after complete verification.
+On an upstream cache miss, Poudrine withholds the last byte of full and ranged responses until the complete download matches the signed catalog’s size and checksum. A failed check leaves the response incomplete.
+
+For a full GET from disk, Poudrine hashes the bytes it sends in one sequential pass. This covers cache hits, packages in the local repository, and live packages, including those kept for clients using an earlier catalog. For a retained live URL, the expected SHA-256 checksum is part of the URL. A read error, size mismatch or checksum failure interrupts the transfer.
+
+For a partial GET from disk, Poudrine reads the requested ranges without hashing the rest of the archive. A retained live URL also requires a compact-manifest read to check overlay policy. The signed catalog authenticates the complete archive. Clients must verify the assembled file against that checksum before using it.
+
+Keep write access to the local package repository restricted to trusted publishers, and keep the cache and retained archives in the service account’s private state directory. Bytes sent before a failure are already visible to the client. Poudrine issues bootstrap signatures only after verifying the complete package archive.
