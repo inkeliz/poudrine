@@ -1,13 +1,13 @@
 #!/bin/sh
-# From the checkout, run this on the builder and save the report locally:
-#   ssh user@builder sh -s < examples/check-poudriere-rebuild.sh > rebuild-report.txt
-# To compare the two reported runs, use this command from the checkout:
-#   ssh user@builder sh -s -- --compare 2026-11-24_16h38m47s.279112079 2026-11-26_08h56m56s.301942898 < examples/check-poudriere-rebuild.sh > rebuild-comparison.txt
-# On the builder, open or follow a log using a full path printed in the report:
+# In your SSH session on the builder, change to the directory containing this
+# script (examples/ in a checkout). Compare the November 24 and 26 runs:
+#   sh ./check-poudriere-rebuild.sh --compare 2026-11-24_16h38m47s.279112079 2026-11-26_08h56m56s.301942898 > rebuild-comparison.txt
+#   less rebuild-comparison.txt
+# To list jail versions and recent package logs:
+#   sh ./check-poudriere-rebuild.sh
+# Open or follow a log using a full path printed by the script:
 #   less /full/path/to/package.log
 #   tail -f /full/path/to/package.log
-# From your own machine, copy a full log:
-#   scp user@builder:/full/path/to/package.log .
 # These logs cover individual packages. Early repository cleanup messages
 # were printed to the worker's bulk console before package logging started.
 # To check a different worker or package on the builder:
