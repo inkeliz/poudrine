@@ -170,6 +170,21 @@ type BuildHistory struct {
 var ErrBuildInterval = errors.New("interval must be hour, day, week, or month")
 var ErrBuildPeriod = errors.New("expected a chart period start, as_of timestamp and optional cursor within that period")
 
+// SuccessfulBuildTotals counts local compilations by finish time. The seven
+// UTC calendar days include today. Each successful rebuild counts once.
+func (s DB) SuccessfulBuildTotals(ctx context.Context, at time.Time) (today, yesterday, last7Days int64, err error) {
+	midnight := at.UTC().Truncate(24 * time.Hour)
+	err = s.QueryRowContext(ctx, `SELECT
+		count(*) FILTER (WHERE finished_ns >= ?1),
+		count(*) FILTER (WHERE finished_ns >= ?2 AND finished_ns < ?1),
+		count(*)
+		FROM package_builds
+		WHERE outcome='succeeded' AND finished_ns >= ?3 AND finished_ns <= ?4`,
+		midnight.UnixNano(), midnight.AddDate(0, 0, -1).UnixNano(),
+		midnight.AddDate(0, 0, -6).UnixNano(), at.UnixNano()).Scan(&today, &yesterday, &last7Days)
+	return
+}
+
 // Include the current partial period. UTC keeps days consistent across DST,
 // and calculating from the first of each month avoids end-of-month rollover.
 func buildBucketBounds(interval string, at time.Time) ([]time.Time, error) {

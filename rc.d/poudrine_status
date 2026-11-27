@@ -8,7 +8,7 @@
 
 name=poudrine_status
 rcvar=poudrine_status_enable
-desc="Public read-only Poudrine catalog counts"
+desc="Public read-only Poudrine statistics"
 
 load_rc_config "$name"
 : "${poudrine_status_enable:=NO}"

@@ -7,7 +7,6 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/inkeliz/poudrine/internal/catalog"
 	"github.com/inkeliz/poudrine/internal/config"
 	"github.com/inkeliz/poudrine/internal/statusproto"
 )
@@ -65,9 +64,9 @@ func OpenStatsWriter(path string) (*os.File, error) {
 	return file, nil
 }
 
-func WritePublicStats(file *os.File, s catalog.CatalogStats) error {
+func WritePublicStats(file *os.File, counts statusproto.Counts) error {
 	// Keep the inode pinned by the public reader.
-	record := (statusproto.Counts{Packages: int64(s.Packages), Ahead: int64(s.Ahead)}).Record()
+	record := counts.Record()
 	n, err := syscall.Pwrite(int(file.Fd()), record, 0)
 	if n > 0 && n != len(record) {
 		// Do not leave a partial record available after a short device write.

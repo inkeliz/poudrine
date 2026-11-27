@@ -174,5 +174,7 @@ To list packages for a chart bar, send the history response’s `interval` and `
 
 ### Optional public status page
 
-To publish just the package count and the number ahead of FreeBSD, run `sysrc poudrine_status_enable=YES` and `service poudrine_status start` as root. The separate service listens on `[::]:8282` by default and serves public HTML at `/`. For JSON, use `GET /status.json`; `HEAD` returns the same headers without a body. Both the HTML page and JSON endpoint are public and require no keys, signatures or request body. Set `poudrine_status_listen` in `rc.conf` to choose another address.
+To publish repository and compilation totals, run `sysrc poudrine_status_enable=YES` and `service poudrine_status start` as root. The separate service listens on `[::]:8282` by default. It serves public HTML at `/` and JSON at `/status.json`. Both endpoints accept `GET` and `HEAD` without authentication. Set `poudrine_status_listen` in `rc.conf` to choose another address.
+
+The page shows the number of packages available, ahead of FreeBSD, and built locally in the catalog. Successful local compilations count by finish date in UTC, including repeated builds of the same package. The seven-day total includes today. The JSON response keeps `packages` and `ahead` and adds `local_builds` and `compilations` when available. `compilations` contains `today`, `yesterday`, `last_7_days`, and the UTC date as an integer in YYYYMMDD format. Cache contents, client activity and package-level build details stay private.
 

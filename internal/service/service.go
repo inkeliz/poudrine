@@ -158,7 +158,7 @@ func serve(ctx context.Context, o config.Options) error {
 	return serveHTTP(ctx, o, repoListener, webListener, repo, api, publicStats)
 }
 
-func monitor(ctx context.Context, o config.Options, cat *catalog.Catalog, cache *catalog.Cache, publicStats *os.File) {
+func monitor(ctx context.Context, o config.Options, cat *catalog.Catalog, cache *catalog.Cache) {
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
 	var next, last time.Time
@@ -187,11 +187,6 @@ func monitor(ctx context.Context, o config.Options, cat *catalog.Catalog, cache 
 				log.Printf("prune download cache: %v", err)
 			}
 			stats := cat.Stats()
-			if publicStats != nil {
-				if err := public.WritePublicStats(publicStats, stats); err != nil {
-					log.Printf("write public stats: %v", err)
-				}
-			}
 			log.Printf("catalog checked: %d packages, %d ahead", stats.Packages, stats.Ahead)
 		}
 		select {

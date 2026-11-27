@@ -31,6 +31,40 @@ func TestBuildBucketCalendar(t *testing.T) {
 	}
 }
 
+func TestSuccessfulBuildTotals(t *testing.T) {
+	db, err := Open(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := t.Context()
+	at := testutil.Time(t, "2024-02-29T19:00:00-05:00") // March 1 at midnight UTC.
+	var records []BuildRecord
+	for _, result := range []struct {
+		finish  time.Time
+		outcome string
+	}{
+		{at.AddDate(0, 0, -6).Add(-time.Nanosecond), "succeeded"},
+		{at.AddDate(0, 0, -6), "succeeded"},
+		{at.AddDate(0, 0, -1), "succeeded"},
+		{at.Add(-time.Nanosecond), "succeeded"},
+		{at, "failed"},
+		{at, "succeeded"},
+		{at.Add(time.Nanosecond), "succeeded"},
+	} {
+		records = append(records, BuildRecord{
+			Package: "curl-1", Started: result.finish.Add(-time.Second), Finished: result.finish, Outcome: result.outcome,
+		})
+	}
+	if err := db.RecordBuilds(ctx, records); err != nil {
+		t.Fatal(err)
+	}
+	today, yesterday, week, err := db.SuccessfulBuildTotals(ctx, at)
+	if err != nil || today != 1 || yesterday != 2 || week != 4 {
+		t.Fatalf("build totals at midnight UTC: today=%d yesterday=%d week=%d err=%v", today, yesterday, week, err)
+	}
+}
+
 func TestBuildHistoryRetentionAndReplay(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(t.TempDir(), false)

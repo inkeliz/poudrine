@@ -124,6 +124,9 @@ func TestCatalogTrustMergeAndRefresh(t *testing.T) {
 		t.Fatalf("unexpected catalog stats %+v", stats)
 	}
 	snapshot := c.Current.Load()
+	if snapshot.LocalBuilds != 2 {
+		t.Fatalf("expected two published local builds (first and tie), got %d", snapshot.LocalBuilds)
+	}
 	original, ok := snapshot.FreeBSDPackage("first")
 	if !ok || original.Local || original.Version != "1" || snapshot.Compiled["first"].Version != "2" {
 		t.Fatalf("missing source/version comparison: FreeBSD %+v, compiled %+v", original, snapshot.Compiled["first"])

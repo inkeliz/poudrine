@@ -56,6 +56,10 @@ func (h *statusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s, available := readCounts(h.fd)
+	// A snapshot from before midnight cannot label that day's builds as today.
+	if s.Compilations != nil && s.Compilations.UTCDate != statusproto.UTCDate(time.Now()) {
+		s.Compilations = nil
+	}
 	code := http.StatusOK
 	if !available {
 		code = http.StatusServiceUnavailable
@@ -72,7 +76,7 @@ func (h *statusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 	case available:
-		body, _ = json.Marshal(s) // Two integers always marshal.
+		body, _ = json.Marshal(s)
 		body = append(body, '\n')
 		w.Header().Set("Content-Type", "application/json")
 	default:
@@ -198,7 +202,7 @@ func run(path, address string) error {
 
 func Main() {
 	addr := flag.String("listen", "[::]:8282", "numeric HTTP listen address and port")
-	file := flag.String("status-file", "/var/run/poudrine-status/status.json", "catalog count snapshot")
+	file := flag.String("status-file", "/var/run/poudrine-status/status.json", "public statistics snapshot")
 	flag.Parse()
 	if flag.NArg() != 0 {
 		flag.Usage()

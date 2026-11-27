@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/inkeliz/poudrine/internal/statusproto"
 	"golang.org/x/sys/unix"
@@ -94,7 +95,7 @@ func TestStatusReplies(t *testing.T) {
 	}
 	set(`{"packages":0,"ahead":1,"extra":"sensitive snapshot content"}`)
 	unavailable := reply("GET", "/", "", http.StatusServiceUnavailable).Body.String()
-	if !strings.Contains(unavailable, "Statistics unavailable") || strings.Count(unavailable, ">—</dd>") != 2 || strings.Contains(unavailable, "sensitive snapshot content") {
+	if !strings.Contains(unavailable, "Statistics unavailable") || strings.Count(unavailable, ">—</dd>") != 6 || strings.Contains(unavailable, "sensitive snapshot content") {
 		t.Fatal("HTML must show unavailable counts without exposing invalid snapshot contents")
 	}
 	// Unmarshal ignores unknown fields and uses the last duplicate value.
@@ -146,6 +147,30 @@ func TestStatusReplies(t *testing.T) {
 		if jsonHead.Body.Len() != 0 || jsonHead.Header().Get("Content-Length") != strconv.Itoa(jsonPage.Body.Len()) || jsonHead.Header().Get("Content-Type") != "application/json" {
 			t.Fatal("incorrect JSON HEAD response")
 		}
+	}
+	today := statusproto.UTCDate(time.Now())
+	set(fmt.Sprintf(`{"packages":125,"ahead":30,"local_builds":0,"compilations":{"utc_date":%d,"today":1234,"yesterday":0,"last_7_days":9999,"packages":["secret-port"]},"cache":{"archives":["secret-cache"]},"clients":99999}`, today))
+	response := reply("GET", "/status.json", "", http.StatusOK).Body.String()
+	want := fmt.Sprintf("{\"packages\":125,\"ahead\":30,\"local_builds\":0,\"compilations\":{\"utc_date\":%d,\"today\":1234,\"yesterday\":0,\"last_7_days\":9999}}\n", today)
+	if response != want {
+		t.Fatalf("unexpected public JSON %s", response)
+	}
+	page := reply("GET", "/", "", http.StatusOK).Body.String()
+	if !strings.Contains(page, "Packages compiled") || !strings.Contains(page, ">1,234</dd>") ||
+		!strings.Contains(page, ">9,999</dd>") || strings.Count(page, ">0</dd>") != 2 || strings.Contains(page, "secret") {
+		t.Fatal("expected localized compilation totals and visible zeros without private fields")
+	}
+	set(`{"packages":125,"ahead":30,"local_builds":0,"compilations":{"utc_date":20000101,"today":1,"yesterday":0,"last_7_days":1}}`)
+	if got := reply("GET", "/status.json", "", http.StatusOK).Body.String(); got != "{\"packages\":125,\"ahead\":30,\"local_builds\":0}\n" {
+		t.Fatalf("stale compilation counts were served: %s", got)
+	}
+	for _, raw := range []string{
+		`{"packages":1,"ahead":0,"local_builds":2}`,
+		`{"packages":1,"ahead":0,"compilations":{"utc_date":20261127,"today":null,"yesterday":0,"last_7_days":2}}`,
+		`{"packages":1,"ahead":0,"compilations":{"utc_date":20261127,"today":1,"yesterday":2,"last_7_days":2}}`,
+	} {
+		set(raw)
+		reply("GET", "/status.json", "", http.StatusServiceUnavailable)
 	}
 	reply("GET", "/status.json?", "", http.StatusBadRequest)
 	reply("GET", "/status.json?format=json", "", http.StatusBadRequest)

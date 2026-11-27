@@ -68,6 +68,7 @@ type Snapshot struct {
 	Metadata      map[string]MetadataFile `json:"-"`
 	updated       time.Time
 	Ahead         int `json:"-"`
+	LocalBuilds   int `json:"-"`
 }
 
 func (s *Snapshot) offeredVersion(name string) string {
@@ -463,6 +464,9 @@ func (c *Catalog) PublishCatalog(ctx context.Context, upstream *repoContent, rev
 		}
 		s.ByPath[m.Pkg.Path] = m.Pkg
 		s.PathByName[m.Pkg.Name] = m.Pkg.Path
+		if m.Pkg.Local && !s.Fetched[k] {
+			s.LocalBuilds++
+		}
 		if original, ok := s.Displaced[k]; ok && !s.Fetched[k] && ComparePkgVersions(m.Pkg.Version, original.Version) > 0 {
 			s.Ahead++
 		}

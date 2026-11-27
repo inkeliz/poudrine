@@ -1,15 +1,14 @@
 package public
 
 import (
-	"encoding/json"
 	"io"
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
-	"time"
 
-	"github.com/inkeliz/poudrine/internal/catalog"
+	"github.com/inkeliz/poudrine/internal/statusproto"
 )
 
 func TestPublicStatsPinnedReader(t *testing.T) {
@@ -24,9 +23,14 @@ func TestPublicStatsPinnedReader(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reader.Close()
-	updated := time.Now()
 	buf := make([]byte, 1024)
-	for _, counts := range []catalog.CatalogStats{{Packages: math.MaxInt, Ahead: math.MaxInt, Updated: &updated}, {Packages: 1, Updated: &updated}, {Updated: &updated}} {
+	for _, counts := range []statusproto.Counts{
+		{Packages: math.MaxInt64, Ahead: math.MaxInt64, LocalBuilds: new(int64(math.MaxInt64)), Compilations: &statusproto.Compilations{
+			UTCDate: 20261127, Today: math.MaxInt64 / 2, Yesterday: math.MaxInt64 / 2, Last7Days: math.MaxInt64,
+		}},
+		{Packages: 1, LocalBuilds: new(int64), Compilations: &statusproto.Compilations{UTCDate: 20261127}},
+		{},
+	} {
 		if err := WritePublicStats(writer, counts); err != nil {
 			t.Fatal(err)
 		}
@@ -38,16 +42,10 @@ func TestPublicStatsPinnedReader(t *testing.T) {
 		if err != io.EOF {
 			t.Fatal(err)
 		}
-		if n != 63 {
+		if n != statusproto.RecordSize {
 			t.Fatalf("fixed-size snapshot: got %d bytes", n)
 		}
-		var got map[string]int
-		if err := json.Unmarshal(buf[:n], &got); err != nil {
-			t.Fatal(err)
-		}
-		packages, totalOK := got["packages"]
-		ahead, aheadOK := got["ahead"]
-		if len(got) != 2 || !totalOK || !aheadOK || packages != counts.Packages || ahead != counts.Ahead {
+		if got, ok := statusproto.Parse(buf[:n]); !ok || !reflect.DeepEqual(got, counts) {
 			t.Fatalf("public snapshot %s", buf[:n])
 		}
 	}

@@ -56,7 +56,7 @@
     .status-hero > .overview-art { border-inline-start: 2px solid var(--edge); }
     .status-metrics {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: var(--gap);
       margin: var(--gap) 0 0;
     }
@@ -79,6 +79,11 @@
     .status-ahead .status-count { color: var(--accent); }
     .status-metrics.waiting .status-count { color: var(--muted); }
     .status-detail { margin: 0; color: var(--muted); line-height: 1.5; }
+    .status-section { margin-top: calc(2 * var(--gap)); }
+    .status-section h2 { margin: 0 0 .35rem; font: var(--weight-semibold) 1.45rem/1.2 var(--display); }
+    @media (max-width: 58rem) {
+      .status-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
     @media (max-width: 40rem) {
       .status-hero { grid-template-columns: 1fr; }
       .status-hero > .overview-art {
@@ -126,7 +131,30 @@
         <dd class="status-count" lang="{{.Locale.Tag}}">{{if .Available}}{{.Locale.Sprint .Ahead}}{{else}}—{{end}}</dd>
         <dd class="status-detail">Local builds newer than their FreeBSD counterparts.</dd>
       </div>
+      <div class="status-metric">
+        <dt>Local builds available</dt>
+        <dd class="status-count" lang="{{.Locale.Tag}}">{{if .LocalBuilds}}{{.Locale.Sprint .LocalBuildCount}}{{else}}—{{end}}</dd>
+        <dd class="status-detail">Packages built locally and offered in the published catalog.</dd>
+      </div>
     </dl>
+    <section class="status-section" aria-labelledby="compilation-heading">
+      <h2 id="compilation-heading">Packages compiled</h2>
+      <p class="status-detail">Successful local builds by completion date in UTC. Rebuilds count again.</p>
+      <dl class="status-metrics{{if not .Compilations}} waiting{{end}}">
+        <div class="status-metric">
+          <dt>Today</dt>
+          <dd class="status-count" lang="{{.Locale.Tag}}">{{if .Compilations}}{{.Locale.Sprint .Compilations.Today}}{{else}}—{{end}}</dd>
+        </div>
+        <div class="status-metric">
+          <dt>Yesterday</dt>
+          <dd class="status-count" lang="{{.Locale.Tag}}">{{if .Compilations}}{{.Locale.Sprint .Compilations.Yesterday}}{{else}}—{{end}}</dd>
+        </div>
+        <div class="status-metric">
+          <dt>Last 7 days</dt>
+          <dd class="status-count" lang="{{.Locale.Tag}}">{{if .Compilations}}{{.Locale.Sprint .Compilations.Last7Days}}{{else}}—{{end}}</dd>
+        </div>
+      </dl>
+    </section>
   </main>
 </body>
 </html>

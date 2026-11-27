@@ -139,7 +139,10 @@ func serveHTTP(ctx context.Context, o config.Options, repoListener, webListener 
 			results <- webServer.Serve(webListener)
 		}
 	})
-	wg.Go(func() { monitor(runCtx, o, repo.Catalog, repo.Cache, publicStats) })
+	wg.Go(func() { monitor(runCtx, o, repo.Catalog, repo.Cache) })
+	if publicStats != nil {
+		wg.Go(func() { monitorPublicStats(runCtx, repo.Catalog, repo.Store, publicStats) })
+	}
 	wg.Go(func() { catalog.MonitorLivePackages(runCtx, o, repo.Catalog) })
 	wg.Go(func() { api.DispatchBuildPush(runCtx, repo.Catalog) })
 	wg.Go(func() { api.CleanupNonces(runCtx) })
